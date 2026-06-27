@@ -35,7 +35,7 @@ jobs:
       - name: Cache Zig build cache
         uses: actions/cache@v6
         with:
-          path: ~/.cache/zig-global-cache
+          path: ${{ github.workspace }}/zig-cache
           key: zig-cache-linux-${{ github.sha }}
           restore-keys: |
             zig-cache-linux-
@@ -48,8 +48,8 @@ jobs:
             -Doptimize=Debug \
             -Dno-lib
         env:
-          ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig-global-cache
-          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
 
       - name: Test
         if: ${{ inputs.run_tests }}
@@ -61,8 +61,8 @@ jobs:
             -Dskip-test-incremental \
             --test-timeout 10m
         env:
-          ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig-global-cache
-          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -87,7 +87,7 @@ jobs:
       - name: Cache Zig build cache
         uses: actions/cache@v6
         with:
-          path: ~\AppData\Local\zig-global-cache
+          path: ${{ github.workspace }}\zig-cache
           key: zig-cache-windows-${{ github.sha }}
           restore-keys: |
             zig-cache-windows-
@@ -101,8 +101,8 @@ jobs:
             -Doptimize=Debug `
             -Dno-lib
         env:
-          ZIG_GLOBAL_CACHE_DIR: ~\AppData\Local\zig-global-cache
-          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-local-cache
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\global
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\local
 
       - name: Test
         if: ${{ inputs.run_tests }}
@@ -115,8 +115,8 @@ jobs:
             -Dskip-test-incremental `
             --test-timeout 30m
         env:
-          ZIG_GLOBAL_CACHE_DIR: ~\AppData\Local\zig-global-cache
-          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-local-cache
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\global
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\local
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -145,7 +145,7 @@ jobs:
 #      - name: Cache Zig build cache
 #        uses: actions/cache@v6
 #        with:
-#          path: ~/.cache/zig-global-cache
+#          path: ${{ github.workspace }}/zig-cache
 #          key: zig-cache-macos-${{ github.sha }}
 #          restore-keys: |
 #            zig-cache-macos-
@@ -158,8 +158,8 @@ jobs:
 #            -Doptimize=Debug \
 #            -Dno-lib
 #        env:
-#          ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig-global-cache
-#          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+#          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
+#          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
 #
 #      - name: Test
 #        if: ${{ inputs.run_tests }}
@@ -171,8 +171,8 @@ jobs:
 #            -Dskip-test-incremental \
 #            --test-timeout 10m
 #        env:
-#          ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig-global-cache
-#          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+#          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
+#          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
 #
 #      - name: Upload artifact
 #        uses: actions/upload-artifact@v7
