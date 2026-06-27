@@ -5,6 +5,11 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      run_tests:
+        description: 'Run test suite'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}
@@ -14,8 +19,6 @@ permissions:
   contents: read
 
 env:
-  # Keep in sync with ci/x86_64-linux-debug.sh and ci/x86_64-windows-debug.ps1
-  # (CACHE_BASENAME / PREFIX_PATH variables at the top of each script).
   DEVKIT_VERSION: "0.17.0-dev.203+073889523"
 
 jobs:
@@ -27,13 +30,34 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Cache dev kit
+        id: cache-devkit
+        uses: actions/cache@v6
+        with:
+          path: ~/deps
+          key: devkit-linux-${{ env.DEVKIT_VERSION }}
+
       - name: Download Linux dev kit
+        if: steps.cache-devkit.outputs.cache-hit != 'true'
         run: |
           BASENAME="zig+llvm+lld+clang-x86_64-linux-musl-${{ env.DEVKIT_VERSION }}"
           curl -fL "https://ziglang.org/deps/$BASENAME.tar.xz" -o devkit.tar.xz
           mkdir -p "$HOME/deps"
           tar -xf devkit.tar.xz -C "$HOME/deps"
+
+      - name: Set DEVKIT path
+        run: |
+          BASENAME="zig+llvm+lld+clang-x86_64-linux-musl-${{ env.DEVKIT_VERSION }}"
           echo "DEVKIT=$HOME/deps/$BASENAME" >> $GITHUB_ENV
+
+      - name: Cache Zig build cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/zig-global-cache
+          key: zig-cache-linux-${{ github.sha }}
+          restore-keys: |
+            zig-cache-linux-
 
       - name: Build
         run: |
@@ -46,10 +70,11 @@ jobs:
             -Dtarget=x86_64-linux-musl \
             -Doptimize=Debug
         env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-global-cache
+          ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig-global-cache
           ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
 
       - name: Test
+        if: ${{ inputs.run_tests }}
         run: |
           stage3-debug/bin/zig build test \
             --zig-lib-dir lib \
@@ -59,12 +84,11 @@ jobs:
             -Dskip-test-incremental \
             --test-timeout 10m
         env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-global-cache
+          ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig-global-cache
           ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: zig-x86_64-linux-debug
           path: stage3-debug/
@@ -78,7 +102,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Cache dev kit
+        id: cache-devkit
+        uses: actions/cache@v6
+        with:
+          path: ~\deps
+          key: devkit-windows-${{ env.DEVKIT_VERSION }}
+
       - name: Download Windows dev kit
+        if: steps.cache-devkit.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $BASENAME = "zig+llvm+lld+clang-x86_64-windows-gnu-${{ env.DEVKIT_VERSION }}"
@@ -86,7 +118,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path $DEPS | Out-Null
           Invoke-WebRequest "https://ziglang.org/deps/$BASENAME.zip" -OutFile devkit.zip
           Expand-Archive devkit.zip -DestinationPath $DEPS
-          echo "DEVKIT=$DEPS\$BASENAME" | Out-File -FilePath $Env:GITHUB_ENV -Append
+
+      - name: Set DEVKIT path
+        shell: pwsh
+        run: |
+          $BASENAME = "zig+llvm+lld+clang-x86_64-windows-gnu-${{ env.DEVKIT_VERSION }}"
+          echo "DEVKIT=$Env:USERPROFILE\deps\$BASENAME" | Out-File -FilePath $Env:GITHUB_ENV -Append
+
+      - name: Cache Zig build cache
+        uses: actions/cache@v6
+        with:
+          path: ~\AppData\Local\zig-global-cache
+          key: zig-cache-windows-${{ github.sha }}
+          restore-keys: |
+            zig-cache-windows-
 
       - name: Build
         shell: pwsh
@@ -100,10 +145,11 @@ jobs:
             "-Dtarget=x86_64-windows-gnu" `
             -Doptimize=Debug
         env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-global-cache
+          ZIG_GLOBAL_CACHE_DIR: ~\AppData\Local\zig-global-cache
           ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-local-cache
 
       - name: Test
+        if: ${{ inputs.run_tests }}
         shell: pwsh
         run: |
           stage3-debug\bin\zig build test `
@@ -114,12 +160,11 @@ jobs:
             -Dskip-test-incremental `
             --test-timeout 30m
         env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-global-cache
+          ZIG_GLOBAL_CACHE_DIR: ~\AppData\Local\zig-global-cache
           ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-local-cache
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: zig-x86_64-windows-debug
           path: stage3-debug\
@@ -173,7 +218,7 @@ jobs:
 #          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
 #
 #      - name: Upload artifact
-#        uses: actions/upload-artifact@v4
+#        uses: actions/upload-artifact@v7
 #        if: always()
 #        with:
 #          name: zig-aarch64-macos-debug
