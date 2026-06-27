@@ -1,0 +1,181 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with ci/x86_64-linux-debug.sh and ci/x86_64-windows-debug.ps1
+  # (CACHE_BASENAME / PREFIX_PATH variables at the top of each script).
+  DEVKIT_VERSION: "0.17.0-dev.203+073889523"
+
+jobs:
+  x86_64-linux-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux dev kit
+        run: |
+          BASENAME="zig+llvm+lld+clang-x86_64-linux-musl-${{ env.DEVKIT_VERSION }}"
+          curl -fL "https://ziglang.org/deps/$BASENAME.tar.xz" -o devkit.tar.xz
+          mkdir -p "$HOME/deps"
+          tar -xf devkit.tar.xz -C "$HOME/deps"
+          echo "DEVKIT=$HOME/deps/$BASENAME" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          "$DEVKIT/bin/zig" build \
+            -p stage3-debug \
+            --search-prefix "$DEVKIT" \
+            --zig-lib-dir lib \
+            -Dstatic-llvm \
+            -Duse-zig-libcxx \
+            -Dtarget=x86_64-linux-musl \
+            -Doptimize=Debug
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-global-cache
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+
+      - name: Test
+        run: |
+          stage3-debug/bin/zig build test \
+            --zig-lib-dir lib \
+            --search-prefix "$DEVKIT" \
+            -Dstatic-llvm \
+            -Dskip-non-native \
+            -Dskip-test-incremental \
+            --test-timeout 10m
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-global-cache
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zig-x86_64-linux-debug
+          path: stage3-debug/
+          retention-days: 7
+
+  x86_64-windows-debug:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows dev kit
+        shell: pwsh
+        run: |
+          $BASENAME = "zig+llvm+lld+clang-x86_64-windows-gnu-${{ env.DEVKIT_VERSION }}"
+          $DEPS = "$Env:USERPROFILE\deps"
+          New-Item -ItemType Directory -Force -Path $DEPS | Out-Null
+          Invoke-WebRequest "https://ziglang.org/deps/$BASENAME.zip" -OutFile devkit.zip
+          Expand-Archive devkit.zip -DestinationPath $DEPS
+          echo "DEVKIT=$DEPS\$BASENAME" | Out-File -FilePath $Env:GITHUB_ENV -Append
+
+      - name: Build
+        shell: pwsh
+        run: |
+          & "$Env:DEVKIT\bin\zig.exe" build `
+            -p stage3-debug `
+            --search-prefix "$Env:DEVKIT" `
+            --zig-lib-dir lib `
+            -Dstatic-llvm `
+            -Duse-zig-libcxx `
+            "-Dtarget=x86_64-windows-gnu" `
+            -Doptimize=Debug
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-global-cache
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-local-cache
+
+      - name: Test
+        shell: pwsh
+        run: |
+          stage3-debug\bin\zig build test `
+            --zig-lib-dir lib `
+            --search-prefix "$Env:DEVKIT" `
+            -Dstatic-llvm `
+            -Dskip-non-native `
+            -Dskip-test-incremental `
+            --test-timeout 30m
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-global-cache
+          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-local-cache
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zig-x86_64-windows-debug
+          path: stage3-debug\
+          retention-days: 7
+
+# macOS is billed at 10x the Linux rate on GitHub Actions.
+# Uncomment once Linux and Windows timings are known.
+# Note: macos-latest is currently arm64 (M1/M3, macos-15).
+#
+#  aarch64-macos-debug:
+#    runs-on: macos-latest
+#    steps:
+#      - name: Checkout
+#        uses: actions/checkout@v7
+#        with:
+#          fetch-depth: 0
+#
+#      - name: Download macOS dev kit
+#        run: |
+#          BASENAME="zig+llvm+lld+clang-aarch64-macos-none-${{ env.DEVKIT_VERSION }}"
+#          curl -fL "https://ziglang.org/deps/$BASENAME.tar.xz" -o devkit.tar.xz
+#          mkdir -p "$HOME/deps"
+#          tar -xf devkit.tar.xz -C "$HOME/deps"
+#          echo "DEVKIT=$HOME/deps/$BASENAME" >> $GITHUB_ENV
+#
+#      - name: Build
+#        run: |
+#          "$DEVKIT/bin/zig" build \
+#            -p stage3-debug \
+#            --search-prefix "$DEVKIT" \
+#            --zig-lib-dir lib \
+#            -Dstatic-llvm \
+#            -Duse-zig-libcxx \
+#            -Dtarget=aarch64-macos \
+#            -Doptimize=Debug
+#        env:
+#          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-global-cache
+#          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+#
+#      - name: Test
+#        run: |
+#          stage3-debug/bin/zig build test \
+#            --zig-lib-dir lib \
+#            --search-prefix "$DEVKIT" \
+#            -Dstatic-llvm \
+#            -Dskip-non-native \
+#            -Dskip-test-incremental \
+#            --test-timeout 10m
+#        env:
+#          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-global-cache
+#          ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-local-cache
+#
+#      - name: Upload artifact
+#        uses: actions/upload-artifact@v4
+#        if: always()
+#        with:
+#          name: zig-aarch64-macos-debug
+#          path: stage3-debug/
+#          retention-days: 7

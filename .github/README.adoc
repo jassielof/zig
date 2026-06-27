@@ -1,0 +1,11 @@
+= Zig: Personal GitHub mirror
+
+See the original link:../README.md[README].
+
+== Set up Git remotes
+
+[source,sh]
+----
+git remote add upstream https://codeberg.org/ziglang/zig.git
+# git remote add codeberg https://codeberg.org/USER_FORK/zig.git
+----
