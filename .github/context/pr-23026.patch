@@ -1,0 +1,631 @@
+From fc751c5af715914736456e7d03bafedfa344f80e Mon Sep 17 00:00:00 2001
+From: Meghan Denny <hello@nektro.net>
+Date: Thu, 27 Feb 2025 15:33:12 -0800
+Subject: [PATCH] Revert "Implement `@deprecated`"
+
+---
+ doc/langref.html.in                      | 62 ++++------------
+ doc/langref/test_deprecated_builtin.zig  | 22 ------
+ lib/compiler/build_runner.zig            |  8 --
+ lib/std/Build.zig                        |  2 -
+ lib/std/Build/Module.zig                 |  4 -
+ lib/std/Build/Step/Options.zig           |  3 -
+ lib/std/zig/AstGen.zig                   | 13 ----
+ lib/std/zig/AstRlAnnotate.zig            |  7 +-
+ lib/std/zig/BuiltinFn.zig                |  9 ---
+ lib/std/zig/Zir.zig                      |  4 -
+ src/Compilation.zig                      |  1 -
+ src/Package/Module.zig                   | 10 ---
+ src/Sema.zig                             | 11 ---
+ src/main.zig                             |  6 --
+ src/print_zir.zig                        |  1 -
+ test/cases/compile_errors/deprecated.zig |  9 ---
+ test/tests.zig                           | 94 ------------------------
+ 17 files changed, 15 insertions(+), 251 deletions(-)
+ delete mode 100644 doc/langref/test_deprecated_builtin.zig
+ delete mode 100644 test/cases/compile_errors/deprecated.zig
+
+diff --git a/doc/langref.html.in b/doc/langref.html.in
+index 1aff0f2c6dec..96034d9173f5 100644
+--- a/doc/langref.html.in
++++ b/doc/langref.html.in
+@@ -2288,7 +2288,7 @@ or
+       {#code|test_aligned_struct_fields.zig#}
+ 
+       <p>
+-      Equating packed structs results in a comparison of the backing integer,
++      Equating packed structs results in a comparison of the backing integer, 
+       and only works for the `==` and `!=` operators.
+       </p>
+       {#code|test_packed_struct_equality.zig#}
+@@ -4086,7 +4086,7 @@ fn performFn(start_value: i32) i32 {
+       special-case syntax.
+       </p>
+       <p>
+-      Here is an example of a generic {#syntax#}List{#endsyntax#} data structure.
++			Here is an example of a generic {#syntax#}List{#endsyntax#} data structure.
+       </p>
+       {#code|generic_data_structure.zig#}
+ 
+@@ -4291,10 +4291,10 @@ pub fn print(self: *Writer, arg0: []const u8, arg1: i32) !void {
+       <pre>{#syntax#}@addrSpaceCast(ptr: anytype) anytype{#endsyntax#}</pre>
+       <p>
+       Converts a pointer from one address space to another. The new address space is inferred
+-      based on the result type. Depending on the current target and address spaces, this cast
+-      may be a no-op, a complex operation, or illegal. If the cast is legal, then the resulting
+-      pointer points to the same memory location as the pointer operand. It is always valid to
+-      cast a pointer between the same address spaces.
++			based on the result type. Depending on the current target and address spaces, this cast
++			may be a no-op, a complex operation, or illegal. If the cast is legal, then the resulting
++			pointer points to the same memory location as the pointer operand. It is always valid to
++			cast a pointer between the same address spaces.
+       </p>
+       {#header_close#}
+       {#header_open|@addWithOverflow#}
+@@ -4307,7 +4307,7 @@ pub fn print(self: *Writer, arg0: []const u8, arg1: i32) !void {
+       <pre>{#syntax#}@alignCast(ptr: anytype) anytype{#endsyntax#}</pre>
+       <p>
+       {#syntax#}ptr{#endsyntax#} can be {#syntax#}*T{#endsyntax#}, {#syntax#}?*T{#endsyntax#}, or {#syntax#}[]T{#endsyntax#}.
+-      Changes the alignment of a pointer. The alignment to use is inferred based on the result type.
++			Changes the alignment of a pointer. The alignment to use is inferred based on the result type.
+       </p>
+       <p>A {#link|pointer alignment safety check|Incorrect Pointer Alignment#} is added
+       to the generated code to make sure the pointer is aligned as promised.</p>
+@@ -4384,7 +4384,7 @@ comptime {
+       <pre>{#syntax#}@bitCast(value: anytype) anytype{#endsyntax#}</pre>
+       <p>
+       Converts a value of one type to another type. The return type is the
+-      inferred result type.
++			inferred result type.
+       </p>
+       <p>
+       Asserts that {#syntax#}@sizeOf(@TypeOf(value)) == @sizeOf(DestType){#endsyntax#}.
+@@ -4741,42 +4741,6 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
+       {#see_also|@cVaArg|@cVaCopy|@cVaEnd#}
+       {#header_close#}
+ 
+-      {#header_open|@deprecated#}
+-      <pre>{#syntax#}@deprecated(value: anytype) @TypeOf(value){#endsyntax#}</pre>
+-      <pre>{#syntax#}@deprecated() void{#endsyntax#}</pre>
+-      <p>
+-      Marks a given code path as scheduled for removal. Evaluates to the same
+-      value passed in as argument, or the {#syntax#}void{#endsyntax#} value
+-      when given none.
+-      </p>
+-      <p>
+-      When a public declaration has been moved to a new location, the old
+-      location can be marked {#syntax#}@deprecated{#endsyntax#}:
+-      </p>
+-      {#syntax_block|zig|root.zig#}
+-pub const fooToBar = @deprecated(bar.fromFoo); // moved
+-      {#end_syntax_block#}
+-      <p>
+-      By default deprecated code paths are disallowed in a module defined by
+-      the root package but allowed in modules defined by the rest of the
+-      dependency tree. This behavior can be overridden by passing
+-      <code>-fallow-deprecated</code> or <code>-fno-allow-deprecated</code> to
+-      <code>zig build</code>.
+-      </p>
+-      <p>
+-      The purpose of {#syntax#}@deprecated{#endsyntax#} is to provide at least
+-      one version (a "grace period") of a package that supports both old and new APIs
+-      simultaneously, while providing tooling for programmers to discover what needs
+-      to be upgraded to migrate to the new API. Such a grace period has the key property
+-      that it allows a project's dependency tree to be upgraded <em>one package at a time</em>.
+-      </p>
+-      <p>
+-      Using {#syntax#}@deprecated{#endsyntax#} without an argument can be
+-      useful inside of conditionally compiled blocks:
+-      </p>
+-      {#code|test_deprecated_builtin.zig#}
+-      {#header_close#}
+-
+       {#header_open|@divExact#}
+       <pre>{#syntax#}@divExact(numerator: T, denominator: T) T{#endsyntax#}</pre>
+       <p>
+@@ -4891,8 +4855,8 @@ pub const fooToBar = @deprecated(bar.fromFoo); // moved
+       <pre>{#syntax#}@errorCast(value: anytype) anytype{#endsyntax#}</pre>
+       <p>
+       Converts an error set or error union value from one error set to another error set. The return type is the
+-      inferred result type. Attempting to convert an error which is not in the destination error
+-      set results in safety-checked {#link|Illegal Behavior#}.
++			inferred result type. Attempting to convert an error which is not in the destination error
++			set results in safety-checked {#link|Illegal Behavior#}.
+       </p>
+       {#header_close#}
+ 
+@@ -4971,7 +4935,7 @@ pub const fooToBar = @deprecated(bar.fromFoo); // moved
+       <pre>{#syntax#}@floatFromInt(int: anytype) anytype{#endsyntax#}</pre>
+       <p>
+       Converts an integer to the closest floating point representation. The return type is the inferred result type.
+-      To convert the other way, use {#link|@intFromFloat#}. This operation is legal
++			To convert the other way, use {#link|@intFromFloat#}. This operation is legal
+       for all values of all integer types.
+       </p>
+       {#header_close#}
+@@ -5063,7 +5027,7 @@ pub const fooToBar = @deprecated(bar.fromFoo); // moved
+       <pre>{#syntax#}@intCast(int: anytype) anytype{#endsyntax#}</pre>
+       <p>
+       Converts an integer to another integer while keeping the same numerical value.
+-      The return type is the inferred result type.
++			The return type is the inferred result type.
+       Attempting to convert a number which is out of range of the destination type results in
+       safety-checked {#link|Illegal Behavior#}.
+       </p>
+@@ -5316,7 +5280,7 @@ pub const fooToBar = @deprecated(bar.fromFoo); // moved
+       <pre>{#syntax#}@ptrFromInt(address: usize) anytype{#endsyntax#}</pre>
+       <p>
+       Converts an integer to a {#link|pointer|Pointers#}. The return type is the inferred result type.
+-      To convert the other way, use {#link|@intFromPtr#}. Casting an address of 0 to a destination type
++			To convert the other way, use {#link|@intFromPtr#}. Casting an address of 0 to a destination type
+       which in not {#link|optional|Optional Pointers#} and does not have the {#syntax#}allowzero{#endsyntax#} attribute will result in a
+       {#link|Pointer Cast Invalid Null#} panic when runtime safety checks are enabled.
+       </p>
+diff --git a/doc/langref/test_deprecated_builtin.zig b/doc/langref/test_deprecated_builtin.zig
+deleted file mode 100644
+index 46a08900904d..000000000000
+--- a/doc/langref/test_deprecated_builtin.zig
++++ /dev/null
+@@ -1,22 +0,0 @@
+-test "deprecated code path" {
+-    compute(.greedy, false, 42);
+-}
+-
+-const Strategy = enum { greedy, expensive, fast };
+-fn compute(comptime strat: Strategy, comptime foo: bool, bar: usize) void {
+-    switch (strat) {
+-        .greedy => {
+-            // This combination turned out to be ineffective.
+-            if (!foo) @deprecated(); // use fast strategy when foo is false
+-            runGreedy(foo, bar);
+-        },
+-        .expensive => runExpensive(foo, bar),
+-        .fast => runFast(foo, bar),
+-    }
+-}
+-
+-extern fn runGreedy(foo: bool, bar: usize) void;
+-extern fn runExpensive(foo: bool, bar: usize) void;
+-extern fn runFast(foo: bool, bar: usize) void;
+-
+-// test_error=deprecated
+diff --git a/lib/compiler/build_runner.zig b/lib/compiler/build_runner.zig
+index 5aa8826df527..8702acb32977 100644
+--- a/lib/compiler/build_runner.zig
++++ b/lib/compiler/build_runner.zig
+@@ -80,7 +80,6 @@ pub fn main() !void {
+             .query = .{},
+             .result = try std.zig.system.resolveTargetQuery(.{}),
+         },
+-        .root_builder = undefined, // populated below
+     };
+ 
+     graph.cache.addPrefix(.{ .path = null, .handle = std.fs.cwd() });
+@@ -95,7 +94,6 @@ pub fn main() !void {
+         local_cache_directory,
+         dependencies.root_deps,
+     );
+-    graph.root_builder = builder;
+ 
+     var targets = ArrayList([]const u8).init(arena);
+     var debug_log_scopes = ArrayList([]const u8).init(arena);
+@@ -262,10 +260,6 @@ pub fn main() !void {
+                 graph.incremental = true;
+             } else if (mem.eql(u8, arg, "-fno-incremental")) {
+                 graph.incremental = false;
+-            } else if (mem.eql(u8, arg, "-fallow-deprecated")) {
+-                graph.allow_deprecated = true;
+-            } else if (mem.eql(u8, arg, "-fno-allow-deprecated")) {
+-                graph.allow_deprecated = false;
+             } else if (mem.eql(u8, arg, "-fwine")) {
+                 builder.enable_wine = true;
+             } else if (mem.eql(u8, arg, "-fno-wine")) {
+@@ -1296,8 +1290,6 @@ fn usage(b: *std.Build, out_stream: anytype) !void {
+         \\    new                        Omit cached steps
+         \\    failures                   (Default) Only print failed steps
+         \\    none                       Do not print the build summary
+-        \\  -fallow-deprecated           Allow usage of deprecated code for the entire build graph
+-        \\  -fno-allow-deprecated        Disallow usage of deprecated code for the entire build graph
+         \\  -j<N>                        Limit concurrent jobs (default is to use all CPU cores)
+         \\  --maxrss <bytes>             Limit memory usage (default is to use available memory)
+         \\  --skip-oom-steps             Instead of failing, skip steps that would exceed --maxrss
+diff --git a/lib/std/Build.zig b/lib/std/Build.zig
+index 4f3364bb19a0..4afdcd2bff8c 100644
+--- a/lib/std/Build.zig
++++ b/lib/std/Build.zig
+@@ -121,8 +121,6 @@ pub const Graph = struct {
+     random_seed: u32 = 0,
+     dependency_cache: InitializedDepMap = .empty,
+     allow_so_scripts: ?bool = null,
+-    allow_deprecated: ?bool = null,
+-    root_builder: *std.Build,
+ };
+ 
+ const AvailableDeps = []const struct { []const u8, []const u8 };
+diff --git a/lib/std/Build/Module.zig b/lib/std/Build/Module.zig
+index 40b9a5e61986..f29994673158 100644
+--- a/lib/std/Build/Module.zig
++++ b/lib/std/Build/Module.zig
+@@ -557,10 +557,6 @@ pub fn appendZigProcessFlags(
+     try addFlag(zig_args, m.pic, "-fPIC", "-fno-PIC");
+     try addFlag(zig_args, m.red_zone, "-mred-zone", "-mno-red-zone");
+ 
+-    // -fno-allow-deprecated is the CLI default, and not inherited, so only pass the flag if true.
+-    const allow_deprecated = m.owner.graph.allow_deprecated orelse (m.owner.graph.root_builder != m.owner);
+-    if (allow_deprecated == true) try zig_args.append("-fallow-deprecated");
+-
+     if (m.dwarf_format) |dwarf_format| {
+         try zig_args.append(switch (dwarf_format) {
+             .@"32" => "-gdwarf32",
+diff --git a/lib/std/Build/Step/Options.zig b/lib/std/Build/Step/Options.zig
+index fda358ee376a..dd09c0b5c070 100644
+--- a/lib/std/Build/Step/Options.zig
++++ b/lib/std/Build/Step/Options.zig
+@@ -514,7 +514,6 @@ test Options {
+             .result = try std.zig.system.resolveTargetQuery(.{}),
+         },
+         .zig_lib_directory = std.Build.Cache.Directory.cwd(),
+-        .root_builder = undefined,
+     };
+ 
+     var builder = try std.Build.create(
+@@ -524,8 +523,6 @@ test Options {
+         &.{},
+     );
+ 
+-    graph.root_builder = builder;
+-
+     const options = builder.addOptions();
+ 
+     const KeywordEnum = enum {
+diff --git a/lib/std/zig/AstGen.zig b/lib/std/zig/AstGen.zig
+index 56254411ce7e..5dc41cc9d2c6 100644
+--- a/lib/std/zig/AstGen.zig
++++ b/lib/std/zig/AstGen.zig
+@@ -9695,19 +9695,6 @@ fn builtinCall(
+         .volatile_cast,
+         => return ptrCast(gz, scope, ri, node),
+ 
+-        .deprecated => {
+-            _ = try gz.addExtendedNodeSmall(.deprecated, node, 0);
+-            switch (params.len) {
+-                0 => return .void_value,
+-                1 => return expr(gz, scope, ri, params[0]),
+-                else => return astgen.failNode(
+-                    node,
+-                    "expected 0 or 1 argument, found {}",
+-                    .{params.len},
+-                ),
+-            }
+-        },
+-
+         // zig fmt: off
+         .has_decl  => return hasDeclOrField(gz, scope, ri, node, params[0], params[1], .has_decl),
+         .has_field => return hasDeclOrField(gz, scope, ri, node, params[0], params[1], .has_field),
+diff --git a/lib/std/zig/AstRlAnnotate.zig b/lib/std/zig/AstRlAnnotate.zig
+index f58ba213cd20..ccc23b18aa1c 100644
+--- a/lib/std/zig/AstRlAnnotate.zig
++++ b/lib/std/zig/AstRlAnnotate.zig
+@@ -817,6 +817,8 @@ fn blockExpr(astrl: *AstRlAnnotate, parent_block: ?*Block, ri: ResultInfo, node:
+ }
+ 
+ fn builtinCall(astrl: *AstRlAnnotate, block: ?*Block, ri: ResultInfo, node: Ast.Node.Index, args: []const Ast.Node.Index) !bool {
++    _ = ri; // Currently, no builtin consumes its result location.
++
+     const tree = astrl.tree;
+     const main_tokens = tree.nodes.items(.main_token);
+     const builtin_token = main_tokens[node];
+@@ -826,11 +828,6 @@ fn builtinCall(astrl: *AstRlAnnotate, block: ?*Block, ri: ResultInfo, node: Ast.
+         if (expected != args.len) return false;
+     }
+     switch (info.tag) {
+-        .deprecated => if (args.len >= 1) {
+-            return astrl.expr(args[0], block, ri);
+-        } else {
+-            return false;
+-        },
+         .import => return false,
+         .branch_hint => {
+             _ = try astrl.expr(args[0], block, ResultInfo.type_only);
+diff --git a/lib/std/zig/BuiltinFn.zig b/lib/std/zig/BuiltinFn.zig
+index c0e0b522a309..1bf31cd165e9 100644
+--- a/lib/std/zig/BuiltinFn.zig
++++ b/lib/std/zig/BuiltinFn.zig
+@@ -121,7 +121,6 @@ pub const Tag = enum {
+     work_item_id,
+     work_group_size,
+     work_group_id,
+-    deprecated,
+ };
+ 
+ pub const EvalToError = enum {
+@@ -1017,14 +1016,6 @@ pub const list = list: {
+                 .illegal_outside_function = true,
+             },
+         },
+-        .{
+-            "@deprecated",
+-            .{
+-                .tag = .deprecated,
+-                .param_count = null,
+-                .eval_to_error = .maybe,
+-            },
+-        },
+     });
+ };
+ 
+diff --git a/lib/std/zig/Zir.zig b/lib/std/zig/Zir.zig
+index 2939f5be652f..5d013635cb3a 100644
+--- a/lib/std/zig/Zir.zig
++++ b/lib/std/zig/Zir.zig
+@@ -2112,9 +2112,6 @@ pub const Inst = struct {
+         /// any code may have gone here, avoiding false-positive "unreachable code" errors.
+         astgen_error,
+ 
+-        /// `operand` is `src_node: i32`.
+-        deprecated,
+-
+         pub const InstData = struct {
+             opcode: Extended,
+             small: u16,
+@@ -4366,7 +4363,6 @@ fn findTrackableInner(
+                 .tuple_decl,
+                 .dbg_empty_stmt,
+                 .astgen_error,
+-                .deprecated,
+                 => return,
+ 
+                 // `@TypeOf` has a body.
+diff --git a/src/Compilation.zig b/src/Compilation.zig
+index 2e0f998a2fc5..399b9b30b785 100644
+--- a/src/Compilation.zig
++++ b/src/Compilation.zig
+@@ -868,7 +868,6 @@ pub const cache_helpers = struct {
+         hh.add(mod.sanitize_c);
+         hh.add(mod.sanitize_thread);
+         hh.add(mod.fuzz);
+-        hh.add(mod.allow_deprecated);
+         hh.add(mod.unwind_tables);
+         hh.add(mod.structured_cfg);
+         hh.add(mod.no_builtin);
+diff --git a/src/Package/Module.zig b/src/Package/Module.zig
+index c5aa21a105f2..0dec7bde76e5 100644
+--- a/src/Package/Module.zig
++++ b/src/Package/Module.zig
+@@ -27,7 +27,6 @@ red_zone: bool,
+ sanitize_c: bool,
+ sanitize_thread: bool,
+ fuzz: bool,
+-allow_deprecated: bool,
+ unwind_tables: std.builtin.UnwindTables,
+ cc_argv: []const []const u8,
+ /// (SPIR-V) whether to generate a structured control flow graph or not
+@@ -96,7 +95,6 @@ pub const CreateOptions = struct {
+         sanitize_c: ?bool = null,
+         sanitize_thread: ?bool = null,
+         fuzz: ?bool = null,
+-        allow_deprecated: ?bool = null,
+         structured_cfg: ?bool = null,
+         no_builtin: ?bool = null,
+     };
+@@ -236,11 +234,6 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
+         break :b false;
+     };
+ 
+-    const allow_deprecated = b: {
+-        if (options.inherited.allow_deprecated) |x| break :b x;
+-        break :b false;
+-    };
+-
+     const code_model = b: {
+         if (options.inherited.code_model) |x| break :b x;
+         if (options.parent) |p| break :b p.code_model;
+@@ -387,7 +380,6 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
+         .sanitize_c = sanitize_c,
+         .sanitize_thread = sanitize_thread,
+         .fuzz = fuzz,
+-        .allow_deprecated = allow_deprecated,
+         .unwind_tables = unwind_tables,
+         .cc_argv = options.cc_argv,
+         .structured_cfg = structured_cfg,
+@@ -482,7 +474,6 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
+             .sanitize_c = sanitize_c,
+             .sanitize_thread = sanitize_thread,
+             .fuzz = fuzz,
+-            .allow_deprecated = allow_deprecated,
+             .unwind_tables = unwind_tables,
+             .cc_argv = &.{},
+             .structured_cfg = structured_cfg,
+@@ -541,7 +532,6 @@ pub fn createLimited(gpa: Allocator, options: LimitedOptions) Allocator.Error!*P
+         .sanitize_c = undefined,
+         .sanitize_thread = undefined,
+         .fuzz = undefined,
+-        .allow_deprecated = undefined,
+         .unwind_tables = undefined,
+         .cc_argv = undefined,
+         .structured_cfg = undefined,
+diff --git a/src/Sema.zig b/src/Sema.zig
+index 2d5407532a3a..9e729a17eabe 100644
+--- a/src/Sema.zig
++++ b/src/Sema.zig
+@@ -1091,7 +1091,6 @@ fn analyzeBodyInner(
+     const map = &sema.inst_map;
+     const tags = sema.code.instructions.items(.tag);
+     const datas = sema.code.instructions.items(.data);
+-    const mod = block.ownerModule();
+ 
+     var crash_info = crash_report.prepAnalyzeBody(sema, block, body);
+     crash_info.push();
+@@ -1405,16 +1404,6 @@ fn analyzeBodyInner(
+                         i += 1;
+                         continue;
+                     },
+-                    .deprecated => {
+-                        if (!mod.allow_deprecated) {
+-                            const src_node: i32 = @bitCast(extended.operand);
+-                            const src = block.nodeOffset(src_node);
+-                            return sema.fail(block, src, "reached deprecated code", .{});
+-                        }
+-
+-                        i += 1;
+-                        continue;
+-                    },
+                     .disable_instrumentation => {
+                         try sema.zirDisableInstrumentation();
+                         i += 1;
+diff --git a/src/main.zig b/src/main.zig
+index ed862b03a090..5e66244484b9 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -520,8 +520,6 @@ const usage_build_generic =
+     \\  -fno-sanitize-thread      Disable Thread Sanitizer
+     \\  -ffuzz                    Enable fuzz testing instrumentation
+     \\  -fno-fuzz                 Disable fuzz testing instrumentation
+-    \\  -fallow-deprecated        Allow usage of deprecated code
+-    \\  -fno-allow-deprecated     Disallow usage of deprecated code
+     \\  -funwind-tables           Always produce unwind table entries for all functions
+     \\  -fasync-unwind-tables     Always produce asynchronous unwind table entries for all functions
+     \\  -fno-unwind-tables        Never produce unwind table entries
+@@ -1456,10 +1454,6 @@ fn buildOutputType(
+                         mod_opts.fuzz = true;
+                     } else if (mem.eql(u8, arg, "-fno-fuzz")) {
+                         mod_opts.fuzz = false;
+-                    } else if (mem.eql(u8, arg, "-fallow-deprecated")) {
+-                        mod_opts.allow_deprecated = true;
+-                    } else if (mem.eql(u8, arg, "-fno-allow-deprecated")) {
+-                        mod_opts.allow_deprecated = false;
+                     } else if (mem.eql(u8, arg, "-fllvm")) {
+                         create_module.opts.use_llvm = true;
+                     } else if (mem.eql(u8, arg, "-fno-llvm")) {
+diff --git a/src/print_zir.zig b/src/print_zir.zig
+index ab3fa1aadc01..46f399dda977 100644
+--- a/src/print_zir.zig
++++ b/src/print_zir.zig
+@@ -535,7 +535,6 @@ const Writer = struct {
+             .c_va_start,
+             .in_comptime,
+             .value_placeholder,
+-            .deprecated,
+             => try self.writeExtNode(stream, extended),
+ 
+             .builtin_src => {
+diff --git a/test/cases/compile_errors/deprecated.zig b/test/cases/compile_errors/deprecated.zig
+deleted file mode 100644
+index 98921a074213..000000000000
+--- a/test/cases/compile_errors/deprecated.zig
++++ /dev/null
+@@ -1,9 +0,0 @@
+-const bad = @deprecated(42);
+-
+-pub export fn foo() usize {
+-    return bad;
+-}
+-
+-// error
+-//
+-// :1:13: error: reached deprecated code
+diff --git a/test/tests.zig b/test/tests.zig
+index 694b0002f4bb..7ef5a33a03da 100644
+--- a/test/tests.zig
++++ b/test/tests.zig
+@@ -1176,100 +1176,6 @@ pub fn addCliTests(b: *std.Build) *Step {
+         step.dependOn(&cleanup.step);
+     }
+ 
+-    {
+-        // Test `zig build -fallow-deprecated`.
+-
+-        const deprecated_check: std.Build.Step.Run.StdIo.Check = .{
+-            .expect_stderr_match = "reached deprecated code",
+-        };
+-
+-        const tmp_path = b.makeTempPath();
+-
+-        // create custom main.zig file containing a deprecated decl
+-        {
+-            const new_main_src =
+-                \\const bad = @deprecated(42);
+-                \\
+-                \\pub fn main() u8 {
+-                \\   return bad;
+-                \\}
+-                \\
+-                \\test {
+-                \\   if (bad != 42) return error.Bad;
+-                \\}
+-            ;
+-
+-            var src_dir = std.fs.cwd().makeOpenPath(b.pathJoin(&.{ tmp_path, "src" }), .{}) catch @panic("unable to create tmp path");
+-            defer src_dir.close();
+-
+-            var main = src_dir.createFile("main.zig", .{}) catch @panic("unable to create main.zig");
+-            defer main.close();
+-
+-            main.writeAll(new_main_src) catch @panic("unable to write to main.zig");
+-        }
+-
+-        const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init" });
+-        init_exe.setCwd(.{ .cwd_relative = tmp_path });
+-        init_exe.setName("zig init");
+-        init_exe.expectStdOutEqual("");
+-        init_exe.expectStdErrEqual("info: created build.zig\n" ++
+-            "info: created build.zig.zon\n" ++
+-            "info: preserving already existing file: src" ++ s ++ "main.zig\n" ++
+-            "info: created src" ++ s ++ "root.zig\n");
+-
+-        const run_test_bad = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test", "--color", "off" });
+-        run_test_bad.setCwd(.{ .cwd_relative = tmp_path });
+-        run_test_bad.setName("zig build test");
+-        run_test_bad.expectExitCode(1);
+-        run_test_bad.expectStdOutEqual("");
+-        run_test_bad.addCheck(deprecated_check);
+-        run_test_bad.step.dependOn(&init_exe.step);
+-
+-        const run_test = b.addSystemCommand(&.{
+-            b.graph.zig_exe,
+-            "build",
+-            "test",
+-            "--color",
+-            "off",
+-            "-fallow-deprecated",
+-        });
+-        run_test.setCwd(.{ .cwd_relative = tmp_path });
+-        run_test.setName("zig build test");
+-        run_test.expectExitCode(0);
+-        run_test.expectStdOutEqual("");
+-        run_test.expectStdErrEqual("");
+-        run_test.step.dependOn(&init_exe.step);
+-
+-        const run_build_bad = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "--color", "off" });
+-        run_build_bad.setCwd(.{ .cwd_relative = tmp_path });
+-        run_build_bad.setName("zig build test");
+-        run_build_bad.expectExitCode(1);
+-        run_build_bad.expectStdOutEqual("");
+-        run_build_bad.addCheck(deprecated_check);
+-        run_build_bad.step.dependOn(&init_exe.step);
+-
+-        const run_build = b.addSystemCommand(&.{
+-            b.graph.zig_exe,
+-            "build",
+-            "--color",
+-            "off",
+-            "-fallow-deprecated",
+-        });
+-        run_build.setCwd(.{ .cwd_relative = tmp_path });
+-        run_build.setName("zig build test");
+-        run_build.expectExitCode(0);
+-        run_build.expectStdOutEqual("");
+-        run_build.expectStdErrEqual("");
+-        run_build.step.dependOn(&init_exe.step);
+-
+-        const cleanup = b.addRemoveDirTree(.{ .cwd_relative = tmp_path });
+-        cleanup.step.dependOn(&run_test.step);
+-        cleanup.step.dependOn(&run_test_bad.step);
+-        cleanup.step.dependOn(&run_build.step);
+-        cleanup.step.dependOn(&run_build_bad.step);
+-
+-        step.dependOn(&cleanup.step);
+-    }
+     // Test Godbolt API
+     if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) {
+         const tmp_path = b.makeTempPath();
