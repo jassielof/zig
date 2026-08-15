@@ -1,0 +1,3 @@
+= Zig
+
+This is a personal mirror of link:https://codeberg.org/ziglang/zig[Zig's repository on Codeberg]. See the original link:../README.md[README].

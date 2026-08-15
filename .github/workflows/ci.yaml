@@ -1,0 +1,220 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  x86_64-linux-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine LLVM devkit version
+        id: devkit-version
+        run: |
+          version=$(sed -n 's/.*\$TARGET-\(.*\)"/\1/p' ci/x86_64-linux-debug-llvm.sh)
+          if [ -z "$version" ]; then
+            echo "Failed to determine LLVM devkit version from ci/x86_64-linux-debug-llvm.sh" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache LLVM devkit
+        id: cache-devkit
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/deps/devkit
+          key: devkit-linux-x86_64-linux-musl-${{ steps.devkit-version.outputs.version }}
+
+      # The devkit's own zig is used as the C/C++ toolchain below, so the
+      # bootstrap compiler, the Zig source being compiled, and these LLVM
+      # libraries are always mutually consistent versions. Previously this
+      # workflow instead fetched an independent, always-fresh "zig master"
+      # binary (via mlugg/setup-zig) just to drive `zig build`, while linking
+      # against this same pinned-older devkit. That mismatch between a very
+      # new self-hosted compiler and much older LLVM libraries caused a real
+      # LLVM codegen assertion failure during testing.
+      - name: Download LLVM devkit
+        if: steps.cache-devkit.outputs.cache-hit != 'true'
+        run: |
+          curl -L --fail -o devkit.tar.xz \
+            "https://ziglang.org/deps/zig+llvm+lld+clang-x86_64-linux-musl-${LLVM_DEVKIT_VERSION}.tar.xz"
+          mkdir -p deps/devkit
+          tar -xf devkit.tar.xz -C deps/devkit --strip-components=1
+          rm devkit.tar.xz
+        env:
+          LLVM_DEVKIT_VERSION: ${{ steps.devkit-version.outputs.version }}
+
+      - name: Cache Zig build cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/zig-cache
+          key: zig-cache-linux-${{ github.sha }}
+          restore-keys: |
+            zig-cache-linux-
+
+      - name: Cache CMake build tree
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/build
+          key: cmake-build-linux-${{ github.sha }}
+          restore-keys: |
+            cmake-build-linux-
+
+      - name: Configure
+        run: |
+          DEVKIT="${{ github.workspace }}/deps/devkit"
+          export CC="$DEVKIT/bin/zig cc -target x86_64-linux-musl -mcpu=baseline"
+          export CXX="$DEVKIT/bin/zig c++ -target x86_64-linux-musl -mcpu=baseline"
+          cmake -S . -B build -GNinja \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage3-debug" \
+            -DCMAKE_PREFIX_PATH="$DEVKIT" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DZIG_TARGET_TRIPLE=x86_64-linux-musl \
+            -DZIG_TARGET_MCPU=baseline \
+            -DZIG_STATIC=ON \
+            -DZIG_NO_LIB=ON
+
+      - name: Build
+        run: cmake --build build --target install
+
+      - name: Test
+        run: |
+          stage3-debug/bin/zig build test \
+            -Dskip-non-native \
+            -Dskip-release \
+            -Dskip-test-incremental \
+            --test-timeout 10m
+        env:
+          ZIG_LIB_DIR: ${{ github.workspace }}/lib
+
+      - name: Upload artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: zig-x86_64-linux-debug
+          path: stage3-debug/
+          retention-days: 7
+
+  x86_64-windows-debug:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\global
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\local
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine LLVM devkit version
+        id: devkit-version
+        shell: pwsh
+        run: |
+          $match = Select-String -Path ci/x86_64-windows-debug.ps1 -Pattern '\$TARGET-(.+)"' | Select-Object -First 1
+          if (-not $match) {
+            Write-Error "Failed to determine LLVM devkit version from ci/x86_64-windows-debug.ps1"
+            exit 1
+          }
+          $version = $match.Matches[0].Groups[1].Value
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Cache LLVM devkit
+        id: cache-devkit
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}\deps\devkit
+          key: devkit-windows-x86_64-windows-gnu-${{ steps.devkit-version.outputs.version }}
+
+      # See the comment on the equivalent step in the Linux job: the devkit's
+      # own zig.exe drives the CMake build below, so the compiler and these
+      # LLVM libraries can never drift apart the way they did when an
+      # independently-versioned "zig master" build tool was used instead.
+      - name: Download LLVM devkit
+        if: steps.cache-devkit.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://ziglang.org/deps/zig+llvm+lld+clang-x86_64-windows-gnu-$env:LLVM_DEVKIT_VERSION.zip" `
+            -OutFile devkit.zip
+          Expand-Archive -Path devkit.zip -DestinationPath deps-extracted
+          $inner = Get-ChildItem deps-extracted | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path deps | Out-Null
+          Move-Item $inner.FullName deps\devkit
+          Remove-Item devkit.zip
+          Remove-Item -Recurse -Force deps-extracted
+        env:
+          LLVM_DEVKIT_VERSION: ${{ steps.devkit-version.outputs.version }}
+
+      - name: Cache Zig build cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}\zig-cache
+          key: zig-cache-windows-${{ github.sha }}
+          restore-keys: |
+            zig-cache-windows-
+
+      - name: Cache CMake build tree
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}\build
+          key: cmake-build-windows-${{ github.sha }}
+          restore-keys: |
+            cmake-build-windows-
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $devkit = "${{ github.workspace }}\deps\devkit" -replace '\\', '/'
+          cmake -S . -B build -GNinja `
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}\stage3-debug" `
+            -DCMAKE_PREFIX_PATH="$devkit" `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DCMAKE_C_COMPILER="$devkit/bin/zig.exe;cc" `
+            -DCMAKE_CXX_COMPILER="$devkit/bin/zig.exe;c++" `
+            -DCMAKE_AR="$devkit/bin/zig.exe" `
+            -DZIG_AR_WORKAROUND=ON `
+            -DZIG_STATIC=ON `
+            -DZIG_USE_LLVM_CONFIG=OFF `
+            -DZIG_NO_LIB=ON
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --target install
+
+      - name: Test
+        shell: pwsh
+        run: |
+          stage3-debug\bin\zig build test `
+            -Dskip-non-native `
+            -Dskip-release `
+            -Dskip-test-incremental `
+            --test-timeout 30m
+        env:
+          ZIG_LIB_DIR: ${{ github.workspace }}\lib
+
+      - name: Upload artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: zig-x86_64-windows-debug
+          path: stage3-debug\
+          retention-days: 7

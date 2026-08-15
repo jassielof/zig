@@ -1,0 +1,28 @@
+name: Sync from Codeberg
+
+on:
+  schedule:
+    - cron: 0 6 * * 1
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - name: Sync from Codeberg upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://codeberg.org/ziglang/zig.git
+          git fetch upstream master
+          git merge --no-edit upstream/master
+          git push origin master
