@@ -102,6 +102,21 @@ jobs:
       - name: Build
         run: cmake --build build --target install
 
+      # -Dno-lib (above) intentionally skips copying lib/ into the install
+      # prefix during the compiler build itself - re-copying it on every
+      # build would be pure waste, since it's already sitting in the
+      # checkout. Assembled here instead, once, straight onto the artifact,
+      # matching the layout of the official Zig downloads (zig binary +
+      # lib/ + doc/langref.html + LICENSE + README.md all at the top level)
+      # so the artifact is directly usable, not just the bare compiler.
+      - name: Assemble full bundle
+        run: |
+          cp -r lib stage3-debug/lib
+          cp LICENSE README.md stage3-debug/
+          stage3-debug/bin/zig build langref --prefix stage3-debug
+        env:
+          ZIG_LIB_DIR: ${{ github.workspace }}/lib
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -271,6 +286,19 @@ jobs:
       - name: Build
         shell: pwsh
         run: cmake --build build --target install
+
+      # See the comment on the equivalent step in the Linux job: assembles
+      # the official-style bundle (exe + lib/ + doc/langref.html + LICENSE +
+      # README.md) onto the artifact without slowing down the actual
+      # compiler build, which intentionally skips lib/ via -Dno-lib.
+      - name: Assemble full bundle
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse -Path lib -Destination stage3-debug\lib
+          Copy-Item -Path LICENSE, README.md -Destination stage3-debug\
+          stage3-debug\bin\zig build langref --prefix stage3-debug
+        env:
+          ZIG_LIB_DIR: ${{ github.workspace }}\lib
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
