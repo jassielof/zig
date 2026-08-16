@@ -6,9 +6,12 @@ on:
       - master
   workflow_dispatch:
 
+# Keyed on the ref rather than the commit SHA, so all runs targeting the
+# same branch share one group - a new push then cancels whatever's still
+# running from the previous push instead of burning resources in parallel.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.sha }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

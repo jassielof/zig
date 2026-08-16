@@ -9,6 +9,13 @@ permissions:
   contents: write
   actions: write
 
+# Prevents overlapping sync runs (e.g. a manual dispatch while the scheduled
+# run is still merging/pushing). Not cancel-in-progress: this job does a
+# git push, so a run in flight should finish rather than get killed mid-way.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-slim
