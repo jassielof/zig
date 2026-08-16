@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 jobs:
-  x86_64-linux-debug:
+  x86_64-linux-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
       ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
@@ -66,9 +66,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/zig-cache
-          key: zig-cache-linux-${{ github.sha }}
+          key: zig-cache-linux-build-${{ github.sha }}
           restore-keys: |
-            zig-cache-linux-
+            zig-cache-linux-build-
 
       - name: Cache CMake build tree
         uses: actions/cache@v6
@@ -95,27 +95,73 @@ jobs:
       - name: Build
         run: cmake --build build --target install
 
-      - name: Test
-        run: |
-          stage3-debug/bin/zig build test \
-            -Dskip-non-native \
-            -Dskip-release \
-            -Dskip-test-incremental \
-            --test-timeout 10m
-        env:
-          ZIG_LIB_DIR: ${{ github.workspace }}/lib
-
       - name: Upload artifact
-        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: zig-x86_64-linux-debug
           path: stage3-debug/
           retention-days: 7
 
-  x86_64-windows-debug:
+  x86_64-linux-test:
+    needs: x86_64-linux-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: fmt
+            steps: test-fmt
+            timeout: 15
+          - suite: modules
+            steps: test-modules
+            timeout: 90
+          - suite: cases
+            steps: test-cases
+            timeout: 90
+          - suite: unit
+            steps: test-unit
+            timeout: 30
+          - suite: misc
+            steps: test-standalone test-c-abi test-link test-stack-traces test-error-traces test-cli
+            timeout: 45
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      ZIG_LIB_DIR: ${{ github.workspace }}/lib
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/local
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download built compiler
+        uses: actions/download-artifact@v7
+        with:
+          name: zig-x86_64-linux-debug
+          path: stage3-debug
+
+      - name: Make compiler executable
+        run: chmod +x stage3-debug/bin/zig
+
+      - name: Cache Zig build cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/zig-cache
+          key: zig-cache-linux-test-${{ matrix.suite }}-${{ github.sha }}
+          restore-keys: |
+            zig-cache-linux-test-${{ matrix.suite }}-
+
+      - name: Test (${{ matrix.suite }})
+        run: |
+          stage3-debug/bin/zig build ${{ matrix.steps }} \
+            -Dskip-non-native \
+            -Dskip-release \
+            --test-timeout 10m
+
+  x86_64-windows-build:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\global
       ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\local
@@ -168,9 +214,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\zig-cache
-          key: zig-cache-windows-${{ github.sha }}
+          key: zig-cache-windows-build-${{ github.sha }}
           restore-keys: |
-            zig-cache-windows-
+            zig-cache-windows-build-
 
       - name: Cache CMake build tree
         uses: actions/cache@v6
@@ -200,21 +246,64 @@ jobs:
         shell: pwsh
         run: cmake --build build --target install
 
-      - name: Test
-        shell: pwsh
-        run: |
-          stage3-debug\bin\zig build test `
-            -Dskip-non-native `
-            -Dskip-release `
-            -Dskip-test-incremental `
-            --test-timeout 30m
-        env:
-          ZIG_LIB_DIR: ${{ github.workspace }}\lib
-
       - name: Upload artifact
-        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: zig-x86_64-windows-debug
           path: stage3-debug\
           retention-days: 7
+
+  x86_64-windows-test:
+    needs: x86_64-windows-build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: fmt
+            steps: test-fmt
+            timeout: 20
+          - suite: modules
+            steps: test-modules
+            timeout: 120
+          - suite: cases
+            steps: test-cases
+            timeout: 120
+          - suite: unit
+            steps: test-unit
+            timeout: 45
+          - suite: misc
+            steps: test-standalone test-c-abi test-link test-stack-traces test-error-traces test-cli
+            timeout: 60
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      ZIG_LIB_DIR: ${{ github.workspace }}\lib
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\global
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\local
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download built compiler
+        uses: actions/download-artifact@v7
+        with:
+          name: zig-x86_64-windows-debug
+          path: stage3-debug
+
+      - name: Cache Zig build cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}\zig-cache
+          key: zig-cache-windows-test-${{ matrix.suite }}-${{ github.sha }}
+          restore-keys: |
+            zig-cache-windows-test-${{ matrix.suite }}-
+
+      - name: Test (${{ matrix.suite }})
+        shell: pwsh
+        run: |
+          stage3-debug\bin\zig build ${{ matrix.steps }} `
+            -Dskip-non-native `
+            -Dskip-release `
+            --test-timeout 20m
