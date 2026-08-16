@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -19,10 +20,25 @@ jobs:
           ref: master
 
       - name: Sync from Codeberg upstream
+        id: sync
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          before="$(git rev-parse HEAD)"
           git remote add upstream https://codeberg.org/ziglang/zig.git
           git fetch upstream master
           git merge --no-edit upstream/master
+          after="$(git rev-parse HEAD)"
           git push origin master
+          echo "changed=$([ "$before" != "$after" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      # A push authenticated with the default GITHUB_TOKEN does NOT trigger
+      # other workflows (GitHub deliberately excludes it to avoid infinite
+      # trigger loops), so ci.yaml's `on: push` never fires on its own after
+      # the push above. Dispatch it explicitly instead, only when the merge
+      # actually moved HEAD.
+      - name: Trigger CI
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yaml --ref master --repo ${{ github.repository }}

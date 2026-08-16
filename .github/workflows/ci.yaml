@@ -62,11 +62,15 @@ jobs:
         env:
           LLVM_DEVKIT_VERSION: ${{ steps.devkit-version.outputs.version }}
 
+      # Keyed on the actual build-relevant source tree rather than the commit
+      # SHA, so a commit that only touches .github/ (like most of this
+      # mirror's own history) reuses the exact same cache instead of always
+      # missing and falling back to a prefix-matched restore.
       - name: Cache Zig build cache
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/zig-cache
-          key: zig-cache-linux-build-${{ github.sha }}
+          key: zig-cache-linux-build-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             zig-cache-linux-build-
 
@@ -74,7 +78,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/build
-          key: cmake-build-linux-${{ github.sha }}
+          key: cmake-build-linux-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             cmake-build-linux-
 
@@ -114,16 +118,19 @@ jobs:
             timeout: 15
           - suite: modules
             steps: test-modules
-            timeout: 90
+            timeout: 100
           - suite: cases
             steps: test-cases
-            timeout: 90
+            timeout: 100
           - suite: unit
             steps: test-unit
             timeout: 30
+          - suite: standalone
+            steps: test-standalone
+            timeout: 60
           - suite: misc
-            steps: test-standalone test-c-abi test-link test-stack-traces test-error-traces test-cli
-            timeout: 45
+            steps: test-c-abi test-link test-stack-traces test-error-traces test-cli
+            timeout: 30
     timeout-minutes: ${{ matrix.timeout }}
     env:
       ZIG_LIB_DIR: ${{ github.workspace }}/lib
@@ -148,7 +155,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/zig-cache
-          key: zig-cache-linux-test-${{ matrix.suite }}-${{ github.sha }}
+          key: zig-cache-linux-test-${{ matrix.suite }}-${{ hashFiles('src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             zig-cache-linux-test-${{ matrix.suite }}-
 
@@ -210,11 +217,13 @@ jobs:
         env:
           LLVM_DEVKIT_VERSION: ${{ steps.devkit-version.outputs.version }}
 
+      # See the comment on the equivalent step in the Linux job for why this
+      # is keyed on source content rather than the commit SHA.
       - name: Cache Zig build cache
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\zig-cache
-          key: zig-cache-windows-build-${{ github.sha }}
+          key: zig-cache-windows-build-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             zig-cache-windows-build-
 
@@ -222,7 +231,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\build
-          key: cmake-build-windows-${{ github.sha }}
+          key: cmake-build-windows-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             cmake-build-windows-
 
@@ -265,16 +274,19 @@ jobs:
             timeout: 20
           - suite: modules
             steps: test-modules
-            timeout: 120
+            timeout: 150
           - suite: cases
             steps: test-cases
-            timeout: 120
+            timeout: 150
           - suite: unit
             steps: test-unit
             timeout: 45
+          - suite: standalone
+            steps: test-standalone
+            timeout: 90
           - suite: misc
-            steps: test-standalone test-c-abi test-link test-stack-traces test-error-traces test-cli
-            timeout: 60
+            steps: test-c-abi test-link test-stack-traces test-error-traces test-cli
+            timeout: 40
     timeout-minutes: ${{ matrix.timeout }}
     env:
       ZIG_LIB_DIR: ${{ github.workspace }}\lib
@@ -296,7 +308,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\zig-cache
-          key: zig-cache-windows-test-${{ matrix.suite }}-${{ github.sha }}
+          key: zig-cache-windows-test-${{ matrix.suite }}-${{ hashFiles('src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             zig-cache-windows-test-${{ matrix.suite }}-
 
