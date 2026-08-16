@@ -267,6 +267,13 @@ jobs:
           restore-keys: |
             cmake-build-windows-
 
+      # -target/-mcpu=baseline (matching ci/x86_64-windows-debug.ps1 exactly)
+      # forces a fixed, known-good CPU feature set instead of letting the
+      # devkit's Clang auto-detect the host CPU's features at runtime. Native
+      # auto-detection on this specific old LLVM 22 snapshot is what was
+      # triggering an intermittent "!Subtarget.is64Bit()" assertion crash
+      # during ordinary C links - the Linux job already pins this the same
+      # way and never hit the issue.
       - name: Configure
         shell: pwsh
         run: |
@@ -275,10 +282,12 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}\stage3-debug" `
             -DCMAKE_PREFIX_PATH="$devkit" `
             -DCMAKE_BUILD_TYPE=Debug `
-            -DCMAKE_C_COMPILER="$devkit/bin/zig.exe;cc" `
-            -DCMAKE_CXX_COMPILER="$devkit/bin/zig.exe;c++" `
+            -DCMAKE_C_COMPILER="$devkit/bin/zig.exe;cc;-target;x86_64-windows-gnu;-mcpu=baseline" `
+            -DCMAKE_CXX_COMPILER="$devkit/bin/zig.exe;c++;-target;x86_64-windows-gnu;-mcpu=baseline" `
             -DCMAKE_AR="$devkit/bin/zig.exe" `
             -DZIG_AR_WORKAROUND=ON `
+            -DZIG_TARGET_TRIPLE=x86_64-windows-gnu `
+            -DZIG_TARGET_MCPU=baseline `
             -DZIG_STATIC=ON `
             -DZIG_USE_LLVM_CONFIG=OFF `
             -DZIG_NO_LIB=ON
