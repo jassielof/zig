@@ -102,26 +102,38 @@ jobs:
       - name: Build
         run: cmake --build build --target install
 
-      # -Dno-lib (above) intentionally skips copying lib/ into the install
-      # prefix during the compiler build itself - re-copying it on every
-      # build would be pure waste, since it's already sitting in the
-      # checkout. Assembled here instead, once, straight onto the artifact,
-      # matching the layout of the official Zig downloads (zig binary +
-      # lib/ + doc/langref.html + LICENSE + README.md all at the top level)
-      # so the artifact is directly usable, not just the bare compiler.
-      - name: Assemble full bundle
-        run: |
-          cp -r lib stage3-debug/lib
-          cp LICENSE README.md stage3-debug/
-          stage3-debug/bin/zig build langref --prefix stage3-debug
-        env:
-          ZIG_LIB_DIR: ${{ github.workspace }}/lib
-
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: zig-x86_64-linux-debug
           path: stage3-debug/
+          retention-days: 7
+
+  # lib/, LICENSE, and README.md are identical regardless of which OS built
+  # the compiler, so this is assembled once here instead of once per OS
+  # build job. doc/langref.html (the Language Reference) is deliberately
+  # left out entirely - zig doesn't need it to build/run/test anything, it's
+  # only there in official releases for offline reading and to deploy
+  # ziglang.org's docs pages. Skipping it means this job is pure file
+  # copying, no compiler involved at all.
+  shared-bundle:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Assemble bundle
+        run: |
+          mkdir -p bundle
+          cp -r lib bundle/lib
+          cp LICENSE README.md bundle/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zig-shared-bundle
+          path: bundle/
           retention-days: 7
 
   x86_64-linux-test:
@@ -135,13 +147,29 @@ jobs:
             steps: test-fmt
             timeout: 15
             extra: ""
-          - suite: modules
-            steps: test-modules
-            timeout: 100
+          # test-modules is itself an umbrella over these 4 independently
+          # runnable steps (see build.zig's addModuleTests call sites) - same
+          # trick as splitting `test` in the first place, one level deeper,
+          # since the combined suite kept getting cancelled at 100min.
+          - suite: std
+            steps: test-std
+            timeout: 60
+            extra: ""
+          - suite: behavior
+            steps: test-behavior
+            timeout: 60
+            extra: ""
+          - suite: compiler-rt
+            steps: test-compiler-rt
+            timeout: 30
+            extra: ""
+          - suite: libc
+            steps: test-libc
+            timeout: 30
             extra: ""
           - suite: cases
             steps: test-cases
-            timeout: 100
+            timeout: 130
             extra: ""
           # test-unit compiles the compiler's own unit-test binary; which
           # backend builds that harness is incidental to what it tests
@@ -160,7 +188,7 @@ jobs:
             extra: ""
           - suite: misc
             steps: test-c-abi test-link test-stack-traces test-error-traces test-cli
-            timeout: 30
+            timeout: 45
             extra: ""
     timeout-minutes: ${{ matrix.timeout }}
     env:
@@ -296,19 +324,8 @@ jobs:
         shell: pwsh
         run: cmake --build build --target install
 
-      # See the comment on the equivalent step in the Linux job: assembles
-      # the official-style bundle (exe + lib/ + doc/langref.html + LICENSE +
-      # README.md) onto the artifact without slowing down the actual
-      # compiler build, which intentionally skips lib/ via -Dno-lib.
-      - name: Assemble full bundle
-        shell: pwsh
-        run: |
-          Copy-Item -Recurse -Path lib -Destination stage3-debug\lib
-          Copy-Item -Path LICENSE, README.md -Destination stage3-debug\
-          stage3-debug\bin\zig build langref --prefix stage3-debug
-        env:
-          ZIG_LIB_DIR: ${{ github.workspace }}\lib
-
+      # lib/ and doc/langref.html are assembled once, separately, in the
+      # shared-bundle job - see its comment for why.
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -327,13 +344,26 @@ jobs:
             steps: test-fmt
             timeout: 20
             extra: ""
-          - suite: modules
-            steps: test-modules
-            timeout: 150
+          # See the comment on the equivalent split in the Linux matrix.
+          - suite: std
+            steps: test-std
+            timeout: 90
+            extra: ""
+          - suite: behavior
+            steps: test-behavior
+            timeout: 90
+            extra: ""
+          - suite: compiler-rt
+            steps: test-compiler-rt
+            timeout: 45
+            extra: ""
+          - suite: libc
+            steps: test-libc
+            timeout: 45
             extra: ""
           - suite: cases
             steps: test-cases
-            timeout: 150
+            timeout: 200
             extra: ""
           # See the comment on the equivalent entry in the Linux matrix: this
           # routes around a real LLVM codegen bug in the stale pinned devkit,
@@ -348,7 +378,7 @@ jobs:
             extra: ""
           - suite: misc
             steps: test-c-abi test-link test-stack-traces test-error-traces test-cli
-            timeout: 40
+            timeout: 60
             extra: ""
     timeout-minutes: ${{ matrix.timeout }}
     env:
