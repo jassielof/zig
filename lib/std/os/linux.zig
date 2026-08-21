@@ -681,6 +681,7 @@ pub var elf_aux_maybe: ?[*]std.elf.Auxv = null;
 const extern_getauxval = switch (builtin.zig_backend) {
     // Calling extern functions is not yet supported with these backends
     .stage2_arm,
+    .stage2_loongarch,
     .stage2_powerpc,
     .stage2_riscv64,
     .stage2_sparc64,
@@ -8108,7 +8109,7 @@ pub const nfds_t = usize;
 pub const pollfd = extern struct {
     fd: fd_t,
     events: i16,
-    revents: i16,
+    revents: i16 = undefined,
 };
 
 pub const POLL = struct {
