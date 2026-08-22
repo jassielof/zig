@@ -357,9 +357,17 @@ jobs:
           # ourselves, which is explicitly out of scope. Every other suite on
           # both OSes passes reliably, so these two are let through as
           # non-blocking rather than treated as real CI failures.
+          # Behaves inconsistently across runs: sometimes crashes in ~90s
+          # with the assertion described above, other times runs the full
+          # suite for 88+ minutes without asserting at all and still isn't
+          # done at a 90min budget. Given a job-level timeout cancellation
+          # bypasses continue-on-error entirely (unlike a normal step
+          # failure), this needs enough headroom to actually finish on the
+          # runs where it doesn't crash - matching test-cases' budget until
+          # real completion data says otherwise.
           - suite: std
             steps: test-std
-            timeout: 90
+            timeout: 200
             extra: ""
             allow-failure: true
           - suite: behavior
