@@ -1,14 +1,19 @@
 name: ci
 
 on:
+  pull_request:
   push:
     branches:
       - master
   workflow_dispatch:
 
-# Keyed on the ref rather than the commit SHA, so all runs targeting the
-# same branch share one group - a new push then cancels whatever's still
-# running from the previous push instead of burning resources in parallel.
+# `push` is scoped to master only, so opening/updating a PR from a feature
+# branch only ever fires `pull_request` (the branch itself never matches the
+# push trigger) - the classic double-run only happens when push is left
+# unscoped alongside pull_request, which isn't the case here. github.ref
+# resolves to refs/pull/<PR#>/merge for PR runs (stable across pushes to
+# that PR, distinct per PR) and refs/heads/master for direct pushes, so this
+# same group/cancel setup already isolates both cases correctly on its own.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -29,41 +34,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine LLVM devkit version
-        id: devkit-version
+      # Ubuntu's runner image preconfigures apt.llvm.org with several major
+      # versions side by side (visible as e.g. "Clang: 20.1.8, 21.1.8,
+      # 22.1.2" in the image's software manifest), so LLVM 22 dev packages
+      # install in seconds from Ubuntu's own mirrors - no ziglang.org
+      # bandwidth, and critically, a *current* LLVM 22 point release instead
+      # of the ziglang.org devkit's pinned snapshot (stale since 2026-06-24),
+      # which is what caused the intermittent Windows LLVM crashes this
+      # mirror hit earlier. This mirror doesn't need the devkit's musl static
+      # target either - that's upstream's choice for maximum portability of
+      # *official* release binaries; this build targets native glibc and
+      # dynamically links LLVM, since nothing here gets released.
+      - name: Install LLVM 22
         run: |
-          version=$(sed -n 's/.*\$TARGET-\(.*\)"/\1/p' ci/x86_64-linux-debug-llvm.sh)
-          if [ -z "$version" ]; then
-            echo "Failed to determine LLVM devkit version from ci/x86_64-linux-debug-llvm.sh" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache LLVM devkit
-        id: cache-devkit
-        uses: actions/cache@v6
-        with:
-          path: ${{ github.workspace }}/deps/devkit
-          key: devkit-linux-x86_64-linux-musl-${{ steps.devkit-version.outputs.version }}
-
-      # The devkit's own zig is used as the C/C++ toolchain below, so the
-      # bootstrap compiler, the Zig source being compiled, and these LLVM
-      # libraries are always mutually consistent versions. Previously this
-      # workflow instead fetched an independent, always-fresh "zig master"
-      # binary (via mlugg/setup-zig) just to drive `zig build`, while linking
-      # against this same pinned-older devkit. That mismatch between a very
-      # new self-hosted compiler and much older LLVM libraries caused a real
-      # LLVM codegen assertion failure during testing.
-      - name: Download LLVM devkit
-        if: steps.cache-devkit.outputs.cache-hit != 'true'
-        run: |
-          curl -L --fail -o devkit.tar.xz \
-            "https://ziglang.org/deps/zig+llvm+lld+clang-x86_64-linux-musl-${LLVM_DEVKIT_VERSION}.tar.xz"
-          mkdir -p deps/devkit
-          tar -xf devkit.tar.xz -C deps/devkit --strip-components=1
-          rm devkit.tar.xz
-        env:
-          LLVM_DEVKIT_VERSION: ${{ steps.devkit-version.outputs.version }}
+          sudo apt-get update
+          sudo apt-get install -y clang-22 llvm-22-dev libclang-22-dev liblld-22-dev
 
       # Keyed on the actual build-relevant source tree rather than the commit
       # SHA, so a commit that only touches .github/ (like most of this
@@ -78,6 +63,7 @@ jobs:
             zig-cache-linux-build-
 
       - name: Cache CMake build tree
+        id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/build
@@ -85,18 +71,34 @@ jobs:
           restore-keys: |
             cmake-build-linux-
 
+      # actions/cache restores files via tar, which preserves each file's
+      # original mtime from when the cache was saved - not "now". Those
+      # restored build/ objects then look older than the just-checked-out
+      # sources, so ninja considers everything stale and rebuilds from
+      # scratch despite the cache hit. cache-hit is only true on an exact
+      # key match (never a restore-keys fallback), which already proves the
+      # source content is byte-identical to what's cached, so it's safe to
+      # tell ninja these outputs are current.
+      - name: Fix restored cache timestamps
+        if: steps.cache-build-tree.outputs.cache-hit == 'true'
+        run: find build -exec touch {} +
+
+      # ZIG_TARGET_TRIPLE is deliberately left at its default ("native")
+      # rather than set explicitly - CMakeLists.txt only turns on
+      # ZIG_USE_LLVM_CONFIG (auto-discovery of the just-installed LLVM via
+      # llvm-config-22) when the triple is exactly "native"; setting it
+      # explicitly, even to the same value, would turn that off. CPU
+      # portability of the shipped binary is still pinned via
+      # ZIG_TARGET_MCPU=baseline independently of the target triple.
       - name: Configure
         run: |
-          DEVKIT="${{ github.workspace }}/deps/devkit"
-          export CC="$DEVKIT/bin/zig cc -target x86_64-linux-musl -mcpu=baseline"
-          export CXX="$DEVKIT/bin/zig c++ -target x86_64-linux-musl -mcpu=baseline"
           cmake -S . -B build -GNinja \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage3-debug" \
-            -DCMAKE_PREFIX_PATH="$DEVKIT" \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DZIG_TARGET_TRIPLE=x86_64-linux-musl \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
             -DZIG_TARGET_MCPU=baseline \
-            -DZIG_STATIC=ON \
+            -DZIG_SHARED_LLVM=ON \
             -DZIG_NO_LIB=ON
 
       - name: Build
@@ -114,8 +116,11 @@ jobs:
   # build job. doc/langref.html (the Language Reference) is deliberately
   # left out entirely - zig doesn't need it to build/run/test anything, it's
   # only there in official releases for offline reading and to deploy
-  # ziglang.org's docs pages. Skipping it means this job is pure file
-  # copying, no compiler involved at all.
+  # ziglang.org's docs pages. upload-artifact accepts multiple paths
+  # directly and archives them relative to their common ancestor (the repo
+  # root here), so lib/, LICENSE, and README.md land at the top level of the
+  # artifact with no local copying at all - not even a checkout-then-cp,
+  # just the checkout itself feeding straight into the upload.
   shared-bundle:
     runs-on: ubuntu-slim
     timeout-minutes: 10
@@ -123,17 +128,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Assemble bundle
-        run: |
-          mkdir -p bundle
-          cp -r lib bundle/lib
-          cp LICENSE README.md bundle/
-
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: zig-shared-bundle
-          path: bundle/
+          path: |
+            lib
+            LICENSE
+            README.md
           retention-days: 7
 
   x86_64-linux-test:
@@ -288,12 +290,19 @@ jobs:
             zig-cache-windows-build-
 
       - name: Cache CMake build tree
+        id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\build
           key: cmake-build-windows-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             cmake-build-windows-
+
+      # See the comment on the equivalent step in the Linux job.
+      - name: Fix restored cache timestamps
+        if: steps.cache-build-tree.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: Get-ChildItem -Recurse -File build | ForEach-Object { $_.LastWriteTime = Get-Date }
 
       # -target/-mcpu=baseline (matching ci/x86_64-windows-debug.ps1 exactly)
       # forces a fixed, known-good CPU feature set instead of letting the
