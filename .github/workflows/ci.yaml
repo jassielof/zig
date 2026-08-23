@@ -34,44 +34,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The multiple Clang/LLVM major versions on this runner image (e.g.
-      # "Clang: 20.1.8, 21.1.8, 22.1.2" in its software manifest) are placed
-      # there directly by the image build (typically extracted from upstream
-      # LLVM release tarballs to /usr/lib/llvm-<major>), not installed via
-      # apt - there's no apt.llvm.org repo configured here (confirmed: the
-      # Ubuntu repos in play are plain noble/noble-updates/etc, and
-      # `apt-get install clang-22` fails with "Unable to locate package").
-      # So this discovers wherever the image actually put it instead of
-      # assuming a path, and fails loudly with real diagnostics if it can't,
-      # rather than guessing again. Using whatever's already here (once
-      # located) still avoids the ziglang.org devkit's stale pinned LLVM
-      # snapshot (unchanged since 2026-06-24) in favor of a current LLVM 22
-      # point release, and needs no download of anything.
-      - name: Locate LLVM 22
-        id: llvm
+      # ubuntu-latest is still 24.04 (noble) as of this writing - its stock
+      # LLVM lineup tops out around 16-18, and there's no apt.llvm.org repo
+      # configured on the image (confirmed: plain apt-get install clang-22
+      # fails with "Unable to locate package", and only llvm-16/17/18 exist
+      # under /usr/lib). ubuntu-26.04 runners are expected to ship LLVM 22
+      # preinstalled (actions/runner-images#14226) but aren't available yet.
+      # Rather than wait on that migration, this adds apt.llvm.org directly
+      # via its official bootstrap script - LLVM's own apt repository,
+      # published for whatever Ubuntu release is actually running. Always
+      # resolves to the current LLVM 22.x point release (never goes stale
+      # the way a pinned devkit version can), and comes from LLVM's own
+      # well-provisioned infrastructure rather than ziglang.org's.
+      - name: Install LLVM 22
         run: |
-          prefix=""
-          for candidate in /usr/lib/llvm-22 /opt/llvm-22 /usr/local/llvm-22; do
-            if [ -x "$candidate/bin/llvm-config" ]; then
-              prefix="$candidate"
-              break
-            fi
-          done
-          if [ -z "$prefix" ] && command -v llvm-config-22 >/dev/null 2>&1; then
-            resolved="$(readlink -f "$(command -v llvm-config-22)")"
-            prefix="$(dirname "$(dirname "$resolved")")"
-          fi
-          if [ -z "$prefix" ]; then
-            echo "::error::Could not locate an LLVM 22 installation on this runner."
-            echo "--- Diagnostics ---"
-            ls -d /usr/lib/llvm-* /opt/llvm-* /usr/local/llvm-* 2>/dev/null || echo "(none of the usual candidate directories exist)"
-            which clang clang++ llvm-config 2>&1 || true
-            apt-cache policy clang-22 llvm-22-dev 2>&1 || true
-            exit 1
-          fi
-          echo "Found LLVM 22 at: $prefix"
-          "$prefix/bin/llvm-config" --version
-          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install -y llvm-22-dev libclang-22-dev liblld-22-dev
 
       # Keyed on the actual build-relevant source tree rather than the commit
       # SHA, so a commit that only touches .github/ (like most of this
@@ -115,13 +95,11 @@ jobs:
       # ZIG_TARGET_MCPU=baseline independently of the target triple.
       - name: Configure
         run: |
-          LLVM_PREFIX="${{ steps.llvm.outputs.prefix }}"
           cmake -S . -B build -GNinja \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage3-debug" \
-            -DCMAKE_PREFIX_PATH="$LLVM_PREFIX" \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
-            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
             -DZIG_TARGET_MCPU=baseline \
             -DZIG_SHARED_LLVM=ON \
             -DZIG_NO_LIB=ON
