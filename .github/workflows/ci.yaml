@@ -90,16 +90,25 @@ jobs:
           restore-keys: |
             zig-cache-linux-build-v2-
 
-      # No restore-keys here, deliberately: a CMakeCache.txt restored from a
-      # different toolchain configuration is a hard configure-time error,
-      # not just a slower rebuild, so an exact-key miss should mean a clean
-      # build/ dir, not a best-effort fallback to whatever's most recent.
+      # restore-keys is safe here as long as the devkit path itself
+      # (deps/devkit, a fixed location, not content-derived) doesn't
+      # change - it briefly got dropped while actively swapping between the
+      # devkit and apt-installed LLVM, since a CMakeCache.txt restored from
+      # a *different toolchain* is a hard configure-time error, not just a
+      # slower rebuild. Now that both OSes are stably back on the devkit,
+      # an inexact restore reliably still has a valid CMAKE_C_COMPILER
+      # path, and skipping CMake's compiler-ABI re-detection on a restored
+      # cache is what took Configure from ~4min back down to ~2s. If the
+      # toolchain source changes again, bump the -v2- suffix below rather
+      # than dropping restore-keys again.
       - name: Cache CMake build tree
         id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/build
           key: cmake-build-linux-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          restore-keys: |
+            cmake-build-linux-v2-
 
       # actions/cache restores files via tar, which preserves each file's
       # original mtime from when the cache was saved - not "now". Those
@@ -164,6 +173,16 @@ jobs:
             README.md
           retention-days: 7
 
+  # No zig-cache caching in the test jobs (removed after finding it was
+  # crowding out the devkit cache): GitHub Actions caps total repo cache
+  # storage at 10GB, and these per-suite caches were multi-GB each
+  # (2GB+ for the biggest ones) across 9 suites x 2 OSes, eating ~8GB of
+  # that budget. They also only ever pay off on an exact source-hash
+  # match, which barely happens in practice - most runs follow a sync that
+  # changes source, guaranteeing a miss anyway - so they were expensive to
+  # keep and rarely useful, while starving the devkit/build caches (a few
+  # hundred MB total, actually reused every run) of the room they need to
+  # not get evicted.
   x86_64-linux-test:
     needs: x86_64-linux-build
     runs-on: ubuntu-latest
@@ -238,14 +257,6 @@ jobs:
       - name: Make compiler executable
         run: chmod +x stage3-debug/bin/zig
 
-      - name: Cache Zig build cache
-        uses: actions/cache@v6
-        with:
-          path: ${{ github.workspace }}/zig-cache
-          key: zig-cache-linux-test-${{ matrix.suite }}-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
-          restore-keys: |
-            zig-cache-linux-test-${{ matrix.suite }}-
-
       - name: Test (${{ matrix.suite }})
         run: |
           stage3-debug/bin/zig build ${{ matrix.steps }} \
@@ -315,14 +326,16 @@ jobs:
           restore-keys: |
             zig-cache-windows-build-v2-
 
-      # No restore-keys, deliberately - see the equivalent step in the
-      # Linux job for why.
+      # restore-keys restored here too - see the equivalent step in the
+      # Linux job for why it's safe now.
       - name: Cache CMake build tree
         id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\build
           key: cmake-build-windows-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          restore-keys: |
+            cmake-build-windows-v2-
 
       # See the comment on the equivalent step in the Linux job.
       - name: Fix restored cache timestamps
@@ -472,14 +485,6 @@ jobs:
         with:
           name: zig-x86_64-windows-debug
           path: stage3-debug
-
-      - name: Cache Zig build cache
-        uses: actions/cache@v6
-        with:
-          path: ${{ github.workspace }}\zig-cache
-          key: zig-cache-windows-test-${{ matrix.suite }}-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
-          restore-keys: |
-            zig-cache-windows-test-${{ matrix.suite }}-
 
       # Same intermittent devkit LLVM crash as the Build step can in theory
       # hit any suite here, not just std/unit - retrying first means a
