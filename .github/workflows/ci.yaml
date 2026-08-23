@@ -53,26 +53,32 @@ jobs:
           sudo ./llvm.sh 22
           sudo apt-get install -y llvm-22-dev libclang-22-dev liblld-22-dev
 
-      # Keyed on the actual build-relevant source tree rather than the commit
-      # SHA, so a commit that only touches .github/ (like most of this
-      # mirror's own history) reuses the exact same cache instead of always
-      # missing and falling back to a prefix-matched restore.
+      # Keyed on the actual build-relevant source tree - and, critically,
+      # on this workflow file itself - rather than the commit SHA. Without
+      # the workflow file in the hash, a CI-only change (like swapping the
+      # devkit for apt-installed LLVM) doesn't change the key, so the exact
+      # match misses but restore-keys still falls back to the previous
+      # cache - restoring a build/CMakeCache.txt with a CMAKE_C_COMPILER
+      # pointing at a toolchain that no longer exists, which is exactly
+      # what broke this build. The -v2- suffix is a one-time clean break
+      # from that already-corrupted cache lineage; new caches from here on
+      # stay valid across CI-only changes without needing another bump.
       - name: Cache Zig build cache
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/zig-cache
-          key: zig-cache-linux-build-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          key: zig-cache-linux-build-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
-            zig-cache-linux-build-
+            zig-cache-linux-build-v2-
 
       - name: Cache CMake build tree
         id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/build
-          key: cmake-build-linux-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          key: cmake-build-linux-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
-            cmake-build-linux-
+            cmake-build-linux-v2-
 
       # actions/cache restores files via tar, which preserves each file's
       # original mtime from when the cache was saved - not "now". Those
@@ -219,7 +225,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/zig-cache
-          key: zig-cache-linux-test-${{ matrix.suite }}-${{ hashFiles('src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
+          key: zig-cache-linux-test-${{ matrix.suite }}-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             zig-cache-linux-test-${{ matrix.suite }}-
 
@@ -288,18 +294,18 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\zig-cache
-          key: zig-cache-windows-build-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          key: zig-cache-windows-build-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
-            zig-cache-windows-build-
+            zig-cache-windows-build-v2-
 
       - name: Cache CMake build tree
         id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\build
-          key: cmake-build-windows-${{ hashFiles('src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          key: cmake-build-windows-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
-            cmake-build-windows-
+            cmake-build-windows-v2-
 
       # See the comment on the equivalent step in the Linux job.
       - name: Fix restored cache timestamps
@@ -332,9 +338,22 @@ jobs:
             -DZIG_USE_LLVM_CONFIG=OFF `
             -DZIG_NO_LIB=ON
 
+      # The pinned devkit's LLVM occasionally hits a real, non-deterministic
+      # codegen assertion on Windows (same input succeeds on other runs) -
+      # see the allow-failure comment on the Windows test matrix below for
+      # the full story. Retrying is cheap here specifically because ninja
+      # tracks completed targets: a re-run after a crash only redoes the one
+      # step that actually failed, not the full 19-step chain.
       - name: Build
         shell: pwsh
-        run: cmake --build build --target install
+        run: |
+          $maxAttempts = 3
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            cmake --build build --target install
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -eq $maxAttempts) { exit $LASTEXITCODE }
+            Write-Warning "Build attempt $i of $maxAttempts failed, likely the known intermittent devkit LLVM crash - retrying"
+          }
 
       # lib/ and doc/langref.html are assembled once, separately, in the
       # shared-bundle job - see its comment for why.
@@ -441,16 +460,30 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\zig-cache
-          key: zig-cache-windows-test-${{ matrix.suite }}-${{ hashFiles('src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
+          key: zig-cache-windows-test-${{ matrix.suite }}-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'test/**', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
             zig-cache-windows-test-${{ matrix.suite }}-
 
+      # Same intermittent devkit LLVM crash as the Build step can in theory
+      # hit any suite here, not just std/unit - retrying first means a
+      # transient hit doesn't need allow-failure to fall back on; only
+      # std/unit keep allow-failure as the final safety net once retries are
+      # exhausted, since those are the ones actually confirmed to hit it.
       - name: Test (${{ matrix.suite }})
         shell: pwsh
         continue-on-error: ${{ matrix.allow-failure }}
         run: |
-          stage3-debug\bin\zig build ${{ matrix.steps }} `
-            -Dskip-non-native `
-            -Dskip-release `
-            ${{ matrix.extra }} `
-            --test-timeout 20m
+          # 2 attempts here, not 3 like Build: unlike a build failure, a
+          # test failure can be a genuine bug in the code under test, and
+          # over-retrying just delays real feedback.
+          $maxAttempts = 2
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            stage3-debug\bin\zig build ${{ matrix.steps }} `
+              -Dskip-non-native `
+              -Dskip-release `
+              ${{ matrix.extra }} `
+              --test-timeout 20m
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($i -eq $maxAttempts) { exit $LASTEXITCODE }
+            Write-Warning "Test attempt $i of $maxAttempts failed - retrying"
+          }
