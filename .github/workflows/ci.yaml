@@ -34,21 +34,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Ubuntu's runner image preconfigures apt.llvm.org with several major
-      # versions side by side (visible as e.g. "Clang: 20.1.8, 21.1.8,
-      # 22.1.2" in the image's software manifest), so LLVM 22 dev packages
-      # install in seconds from Ubuntu's own mirrors - no ziglang.org
-      # bandwidth, and critically, a *current* LLVM 22 point release instead
-      # of the ziglang.org devkit's pinned snapshot (stale since 2026-06-24),
-      # which is what caused the intermittent Windows LLVM crashes this
-      # mirror hit earlier. This mirror doesn't need the devkit's musl static
-      # target either - that's upstream's choice for maximum portability of
-      # *official* release binaries; this build targets native glibc and
-      # dynamically links LLVM, since nothing here gets released.
-      - name: Install LLVM 22
+      # The multiple Clang/LLVM major versions on this runner image (e.g.
+      # "Clang: 20.1.8, 21.1.8, 22.1.2" in its software manifest) are placed
+      # there directly by the image build (typically extracted from upstream
+      # LLVM release tarballs to /usr/lib/llvm-<major>), not installed via
+      # apt - there's no apt.llvm.org repo configured here (confirmed: the
+      # Ubuntu repos in play are plain noble/noble-updates/etc, and
+      # `apt-get install clang-22` fails with "Unable to locate package").
+      # So this discovers wherever the image actually put it instead of
+      # assuming a path, and fails loudly with real diagnostics if it can't,
+      # rather than guessing again. Using whatever's already here (once
+      # located) still avoids the ziglang.org devkit's stale pinned LLVM
+      # snapshot (unchanged since 2026-06-24) in favor of a current LLVM 22
+      # point release, and needs no download of anything.
+      - name: Locate LLVM 22
+        id: llvm
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-22 llvm-22-dev libclang-22-dev liblld-22-dev
+          prefix=""
+          for candidate in /usr/lib/llvm-22 /opt/llvm-22 /usr/local/llvm-22; do
+            if [ -x "$candidate/bin/llvm-config" ]; then
+              prefix="$candidate"
+              break
+            fi
+          done
+          if [ -z "$prefix" ] && command -v llvm-config-22 >/dev/null 2>&1; then
+            resolved="$(readlink -f "$(command -v llvm-config-22)")"
+            prefix="$(dirname "$(dirname "$resolved")")"
+          fi
+          if [ -z "$prefix" ]; then
+            echo "::error::Could not locate an LLVM 22 installation on this runner."
+            echo "--- Diagnostics ---"
+            ls -d /usr/lib/llvm-* /opt/llvm-* /usr/local/llvm-* 2>/dev/null || echo "(none of the usual candidate directories exist)"
+            which clang clang++ llvm-config 2>&1 || true
+            apt-cache policy clang-22 llvm-22-dev 2>&1 || true
+            exit 1
+          fi
+          echo "Found LLVM 22 at: $prefix"
+          "$prefix/bin/llvm-config" --version
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
 
       # Keyed on the actual build-relevant source tree rather than the commit
       # SHA, so a commit that only touches .github/ (like most of this
@@ -92,11 +115,13 @@ jobs:
       # ZIG_TARGET_MCPU=baseline independently of the target triple.
       - name: Configure
         run: |
+          LLVM_PREFIX="${{ steps.llvm.outputs.prefix }}"
           cmake -S . -B build -GNinja \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage3-debug" \
+            -DCMAKE_PREFIX_PATH="$LLVM_PREFIX" \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_COMPILER=clang-22 \
-            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
             -DZIG_TARGET_MCPU=baseline \
             -DZIG_SHARED_LLVM=ON \
             -DZIG_NO_LIB=ON
