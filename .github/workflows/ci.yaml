@@ -98,17 +98,23 @@ jobs:
       # slower rebuild. Now that both OSes are stably back on the devkit,
       # an inexact restore reliably still has a valid CMAKE_C_COMPILER
       # path, and skipping CMake's compiler-ABI re-detection on a restored
-      # cache is what took Configure from ~4min back down to ~2s. If the
-      # toolchain source changes again, bump the -v2- suffix below rather
-      # than dropping restore-keys again.
+      # cache is what took Configure from ~4min back down to ~2s.
+      #
+      # -v3-: bumped again after restore-keys picked up a cache entry still
+      # left over from the apt.llvm.org era (CMAKE_C_COMPILER=clang-22) that
+      # had been sitting under the -v2- prefix since before the revert to
+      # the devkit, and was never invalidated because -v2- itself never
+      # changed when the toolchain was reverted. If the toolchain source
+      # changes again, bump this suffix *at the same time*, in the same
+      # commit - don't rely on restore-keys safety reasoning alone.
       - name: Cache CMake build tree
         id: cache-build-tree
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/build
-          key: cmake-build-linux-v2-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
+          key: cmake-build-linux-v3-${{ hashFiles('.github/workflows/ci.yaml', 'src/**', 'lib/**', 'stage1/**', 'cmake/**', 'CMakeLists.txt', 'build.zig', 'build.zig.zon') }}
           restore-keys: |
-            cmake-build-linux-v2-
+            cmake-build-linux-v3-
 
       # actions/cache restores files via tar, which preserves each file's
       # original mtime from when the cache was saved - not "now". Those
