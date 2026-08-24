@@ -59,6 +59,7 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
         .expand_sub_safe,
         .expand_mul_safe,
 
+        .expand_array_splat,
         .expand_array_to_vector,
     });
 }
@@ -8341,7 +8342,7 @@ fn resolveCallingConventionValues(
 
 fn wantSafety(func: *Func) bool {
     return switch (func.mod.optimize_mode) {
-        .Debug => true,
+        .debug => true,
         .safe => true,
         .fast => false,
         .small => false,
