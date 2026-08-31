@@ -179,18 +179,27 @@ jobs:
             README.md
           retention-days: 2
 
-  # No zig-cache caching in the test jobs (removed after finding it was
+  # PR-only: routine syncs/pushes just need the build to succeed (fast,
+  # cheap), not a full test pass every time. The comprehensive suite runs
+  # instead when a PR is actually opened here - deliberate, infrequent, and
+  # exactly the point where you want maximum confidence before sending the
+  # same change upstream to Codeberg. `needs:` still waits on the build job
+  # even though it's skipped on push - that's fine, GitHub just shows it as
+  # skipped rather than failed.
+  #
+  # No per-suite timeout-minutes either, for the same reason: these only
+  # run when you're deliberately validating before a PR, not gating routine
+  # pushes, so there's no budget to protect - let each suite run to
+  # completion (up to GitHub's own 360min/6h platform ceiling). Still no
+  # zig-cache caching in the test jobs (removed after finding it was
   # crowding out the devkit cache): GitHub Actions caps total repo cache
-  # storage at 10GB, and these per-suite caches were multi-GB each
-  # (2GB+ for the biggest ones) across 9 suites x 2 OSes, eating ~8GB of
-  # that budget. They also only ever pay off on an exact source-hash
-  # match, which barely happens in practice - most runs follow a sync that
-  # changes source, guaranteeing a miss anyway - so they were expensive to
-  # keep and rarely useful, while starving the devkit/build caches (a few
-  # hundred MB total, actually reused every run) of the room they need to
-  # not get evicted.
+  # storage at 10GB, and these per-suite caches were multi-GB each (2GB+ for
+  # the biggest ones) across 9 suites x 2 OSes, eating ~8GB of that budget,
+  # while only ever paying off on an exact source-hash match - which barely
+  # happens in practice even now that this only runs on PRs.
   x86_64-linux-test:
     needs: x86_64-linux-build
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -198,31 +207,24 @@ jobs:
         include:
           - suite: fmt
             steps: test-fmt
-            timeout: 15
             extra: ""
           # test-modules is itself an umbrella over these 4 independently
           # runnable steps (see build.zig's addModuleTests call sites) - same
-          # trick as splitting `test` in the first place, one level deeper,
-          # since the combined suite kept getting cancelled at 100min.
+          # trick as splitting `test` in the first place, one level deeper.
           - suite: std
             steps: test-std
-            timeout: 120
             extra: ""
           - suite: behavior
             steps: test-behavior
-            timeout: 120
             extra: ""
           - suite: compiler-rt
             steps: test-compiler-rt
-            timeout: 30
             extra: ""
           - suite: libc
             steps: test-libc
-            timeout: 30
             extra: ""
           - suite: cases
             steps: test-cases
-            timeout: 130
             extra: ""
           # test-unit compiles the compiler's own unit-test binary; which
           # backend builds that harness is incidental to what it tests
@@ -233,17 +235,13 @@ jobs:
           # without touching backend coverage anywhere it actually matters.
           - suite: unit
             steps: test-unit
-            timeout: 30
             extra: -Duse-llvm=false
           - suite: standalone
             steps: test-standalone
-            timeout: 60
             extra: ""
           - suite: misc
             steps: test-c-abi test-link test-stack-traces test-error-traces test-cli
-            timeout: 90
             extra: ""
-    timeout-minutes: ${{ matrix.timeout }}
     env:
       ZIG_LIB_DIR: ${{ github.workspace }}/lib
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/zig-cache/global
@@ -400,8 +398,11 @@ jobs:
           path: stage3-debug\
           retention-days: 2
 
+  # PR-only, and no per-suite timeout-minutes - see the comment on the
+  # equivalent Linux job for why.
   x86_64-windows-test:
     needs: x86_64-windows-build
+    if: github.event_name == 'pull_request'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -409,12 +410,10 @@ jobs:
         include:
           - suite: fmt
             steps: test-fmt
-            timeout: 20
             extra: ""
             allow-failure: false
-          # See the comment on the equivalent split in the Linux matrix.
-          # allow-failure: true here, and on unit below - both crash with the
-          # same "!Subtarget.is64Bit()" LLVM assertion inside the stale
+          # allow-failure: true here, and on unit below - both crash with
+          # the same "!Subtarget.is64Bit()" LLVM assertion inside the stale
           # Windows devkit, confirmed unrelated to -Duse-llvm (test-unit
           # crashes identically with it set, and the flag works fine on
           # Linux with the same suite). No newer Windows devkit build is
@@ -423,38 +422,28 @@ jobs:
           # has no matching one. Not fixable here without building LLVM
           # ourselves, which is explicitly out of scope. Every other suite on
           # both OSes passes reliably, so these two are let through as
-          # non-blocking rather than treated as real CI failures.
-          # Behaves inconsistently across runs: sometimes crashes in ~90s
-          # with the assertion described above, other times runs the full
-          # suite for 88+ minutes without asserting at all and still isn't
-          # done at a 90min budget. Given a job-level timeout cancellation
-          # bypasses continue-on-error entirely (unlike a normal step
-          # failure), this needs enough headroom to actually finish on the
-          # runs where it doesn't crash - matching test-cases' budget until
-          # real completion data says otherwise.
+          # non-blocking rather than treated as real CI failures. This is
+          # unrelated to the timeout removal above - it's a real bug, not a
+          # budget problem, so it still needs allow-failure even with
+          # unlimited time to run.
           - suite: std
             steps: test-std
-            timeout: 200
             extra: ""
             allow-failure: true
           - suite: behavior
             steps: test-behavior
-            timeout: 90
             extra: ""
             allow-failure: false
           - suite: compiler-rt
             steps: test-compiler-rt
-            timeout: 45
             extra: ""
             allow-failure: false
           - suite: libc
             steps: test-libc
-            timeout: 45
             extra: ""
             allow-failure: false
           - suite: cases
             steps: test-cases
-            timeout: 200
             extra: ""
             allow-failure: false
           # test-unit compiles the compiler's own unit-test binary; which
@@ -462,20 +451,16 @@ jobs:
           # the allow-failure comment above for why this still needs it.
           - suite: unit
             steps: test-unit
-            timeout: 45
             extra: -Duse-llvm=false
             allow-failure: true
           - suite: standalone
             steps: test-standalone
-            timeout: 90
             extra: ""
             allow-failure: false
           - suite: misc
             steps: test-c-abi test-link test-stack-traces test-error-traces test-cli
-            timeout: 120
             extra: ""
             allow-failure: false
-    timeout-minutes: ${{ matrix.timeout }}
     env:
       ZIG_LIB_DIR: ${{ github.workspace }}\lib
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}\zig-cache\global
