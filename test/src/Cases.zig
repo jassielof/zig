@@ -389,11 +389,12 @@ fn addFromDirInner(
             const resolved_target = b.resolveTargetQuery(target_query);
             const target = &resolved_target.result;
             for (backends) |backend| {
-                if (backend == .selfhosted and
-                    target.cpu.arch != .aarch64 and target.cpu.arch != .wasm32 and target.cpu.arch != .x86_64 and target.cpu.arch != .spirv64)
-                {
-                    // Other backends don't support new liveness format
-                    continue;
+                if (backend == .selfhosted) {
+                    switch (target.cpu.arch) {
+                        .aarch64, .wasm32, .x86_64, .spirv64, .spirv32 => {},
+                        // Other backends don't support new liveness format
+                        else => continue,
+                    }
                 }
 
                 if (backend == .selfhosted and target.cpu.arch == .aarch64) {
@@ -676,25 +677,7 @@ const TestManifestConfigDefaults = struct {
             if (@"type" == .@"error") {
                 return "native";
             }
-            return comptime blk: {
-                var defaults: []const u8 = "";
-                // TODO should we only return "mainstream" targets by default here?
-                // TODO we should also specify ABIs explicitly as the backends are
-                // getting more and more complete
-                // Linux
-                for (&[_][]const u8{ "x86_64", "arm", "aarch64" }) |arch| {
-                    defaults = defaults ++ arch ++ "-linux" ++ ",";
-                }
-                // macOS
-                for (&[_][]const u8{"aarch64"}) |arch| {
-                    defaults = defaults ++ arch ++ "-macos" ++ ",";
-                }
-                // Windows
-                defaults = defaults ++ "x86_64-windows" ++ ",";
-                // Wasm
-                defaults = defaults ++ "wasm32-wasi";
-                break :blk defaults;
-            };
+            return "native,wasm32-wasi";
         } else if (std.mem.eql(u8, key, "output_mode")) {
             return switch (@"type") {
                 .@"error" => "Obj",

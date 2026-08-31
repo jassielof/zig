@@ -2596,6 +2596,7 @@ pub const Key = union(enum) {
         arg_values: []const Index,
         result: Index,
         branch_count: u32,
+        branch_quota: u32,
     };
 
     pub fn hash32(key: Key, ip: *const InternPool) u32 {
@@ -5186,7 +5187,7 @@ pub const Tag = enum(u8) {
                 param_comptime_bits: ?[]u32,
                 param_noalias_bits: ?[]u32,
                 spirv_kernel_options: ?extern struct { x: u32, y: u32, z: u32 },
-                spirv_mesh_options: ?extern struct { max_primitives: u32, max_vertices: u32 },
+                spirv_mesh_options: ?extern struct { max_primitives: u32, max_vertices: u32, x: u32, y: u32, z: u32 },
                 param_types: []Index,
             },
             .config = .{
@@ -6272,6 +6273,7 @@ pub const MemoizedCall = struct {
     args_len: u32,
     result: Index,
     branch_count: u32,
+    branch_quota: u32,
 };
 
 pub fn init(ip: *InternPool, gpa: Allocator, io: Io, available_threads: usize) !void {
@@ -6913,6 +6915,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 .arg_values = @ptrCast(extra_list.view().items(.@"0")[extra.end..][0..extra.data.args_len]),
                 .result = extra.data.result,
                 .branch_count = extra.data.branch_count,
+                .branch_quota = extra.data.branch_quota,
             } };
         },
     };
@@ -7992,6 +7995,7 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
                     .args_len = @intCast(memoized_call.arg_values.len),
                     .result = memoized_call.result,
                     .branch_count = memoized_call.branch_count,
+                    .branch_quota = memoized_call.branch_quota,
                 }),
             });
             extra.appendSliceAssumeCapacity(.{@ptrCast(memoized_call.arg_values)});
@@ -9093,6 +9097,9 @@ pub fn getFuncType(
         .spirv_mesh => |mesh| extra.appendSliceAssumeCapacity(.{&.{
             mesh.max_primitives,
             mesh.max_vertices,
+            mesh.x,
+            mesh.y,
+            mesh.z,
         }}),
         else => {},
     };
@@ -12580,10 +12587,10 @@ const PackedCallingConvention = packed struct(u18) {
         };
     }
 
-    fn extraLen(cc: PackedCallingConvention) u2 {
+    fn extraLen(cc: PackedCallingConvention) u3 {
         return switch (cc.tag) {
             .spirv_kernel, .spirv_task => 3,
-            .spirv_mesh => 2,
+            .spirv_mesh => 5,
             else => 0,
         };
     }
@@ -12639,6 +12646,9 @@ const PackedCallingConvention = packed struct(u18) {
                         .stage_output = @fromBackingInt(@intCast(cc.extra)),
                         .max_primitives = trailing[0],
                         .max_vertices = trailing[1],
+                        .x = trailing[2],
+                        .y = trailing[3],
+                        .z = trailing[4],
                     },
                     else => comptime unreachable,
                 },

@@ -391,6 +391,10 @@ pub const CallingConvention = union(enum(u8)) {
     ez80_cet,
     ez80_tiflags,
 
+    // Calling convention used by
+    // [snake2p example program](https://github.com/benanderman/spork-8/blob/1bce10a2c3a3888a3f4ca8208112afbc5973fda4/Code/programs/snake2p.asm)
+    spork8,
+
     /// Options shared across most calling conventions.
     pub const CommonOptions = struct {
         /// The boundary the stack is aligned to when the function is called.
@@ -545,6 +549,9 @@ pub const CallingConvention = union(enum(u8)) {
         stage_output: StageOutput = .output_triangles,
         max_primitives: u32 = 1,
         max_vertices: u32 = 3,
+        x: u32,
+        y: u32,
+        z: u32,
     };
 
     /// Returns the array of `std.Target.Cpu.Arch` to which this `CallingConvention` applies.
@@ -1319,6 +1326,9 @@ pub const CompilerBackend = enum(u64) {
     /// The reference implementation self-hosted compiler of Zig, using the
     /// loongarch backend.
     stage2_loongarch = 13,
+    /// The Zig Software Foundation self-hosted implementation of Zig. Backend
+    /// originally contributed by Ben Anderman in 2026.
+    zsf_spork8 = 14,
 
     _,
 };

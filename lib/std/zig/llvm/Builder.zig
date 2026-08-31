@@ -162,6 +162,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .propeller,
         .sh,
         .sheb,
+        .spork8,
         .x86_16,
         .xtensaeb,
         => unreachable, // Gated by hasLlvmSupport().
@@ -295,6 +296,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .@"3ds",
         .wiiu,
         .@"switch",
+        .gba,
         .ashetos,
         => "unknown",
     };
@@ -576,6 +578,7 @@ pub const DataLayout = struct {
             .sheb,
             .x86_16,
             .xtensaeb,
+            .spork8,
             => unreachable,
         };
     }
