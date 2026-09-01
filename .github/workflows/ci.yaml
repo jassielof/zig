@@ -253,7 +253,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download built compiler
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: zig-x86_64-linux-debug
           path: stage3-debug
@@ -472,7 +472,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download built compiler
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: zig-x86_64-windows-debug
           path: stage3-debug
