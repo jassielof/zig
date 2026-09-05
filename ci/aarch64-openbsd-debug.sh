@@ -1,11 +1,11 @@
 #!/bin/sh
 
-# Requires cmake ninja-build
+# Requires cmake ninja
 
 set -x
 set -e
 
-TARGET="riscv64-linux-musl"
+TARGET="aarch64-openbsd-none"
 MCPU="baseline"
 CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
@@ -43,14 +43,12 @@ ninja install
 # Must be done after zig cc is finished.
 export ZIG_LIB_DIR="$PWD/../lib"
 
-# No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
 stage3-debug/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
-  -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
-  --test-timeout 4m
+  --test-timeout 2m
 
 stage3-debug/bin/zig build \
   --prefix stage4-debug \

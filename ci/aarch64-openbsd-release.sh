@@ -1,11 +1,11 @@
 #!/bin/sh
 
-# Requires cmake ninja-build
+# Requires cmake ninja
 
 set -x
 set -e
 
-TARGET="riscv64-linux-musl"
+TARGET="aarch64-openbsd-none"
 MCPU="baseline"
 CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
@@ -17,16 +17,16 @@ ZIG="$PREFIX/bin/zig"
 export ZIG_GLOBAL_CACHE_DIR="$PWD/zig-global-cache"
 export ZIG_LOCAL_CACHE_DIR="$PWD/zig-local-cache"
 
-mkdir build-debug
-cd build-debug
+mkdir build-release
+cd build-release
 
 export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
 export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
 
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX="stage3-debug" \
+  -DCMAKE_INSTALL_PREFIX="stage3-release" \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
-  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_BUILD_TYPE=Release \
   -DZIG_TARGET_TRIPLE="$TARGET" \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
@@ -43,21 +43,29 @@ ninja install
 # Must be done after zig cc is finished.
 export ZIG_LIB_DIR="$PWD/../lib"
 
-# No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
-stage3-debug/bin/zig build test docs \
+stage3-release/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
-  -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
-  --test-timeout 4m
+  --test-timeout 2m
 
-stage3-debug/bin/zig build \
-  --prefix stage4-debug \
+# Ensure that the fuzzer at least compiles.
+# https://codeberg.org/ziglang/zig/issues/30728
+#stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
+#stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
+
+# Ensure that stage3 and stage4 are byte-for-byte identical.
+stage3-release/bin/zig build \
+  --prefix stage4-release \
   -Denable-llvm \
   -Dno-lib \
+  -Doptimize=ReleaseFast \
+  -Dstrip \
   -Dtarget=$TARGET \
   -Duse-zig-libcxx \
-  -Dversion-string="$(stage3-debug/bin/zig version)"
+  -Dversion-string="$(stage3-release/bin/zig version)"
 
-stage4-debug/bin/zig test ../test/behavior.zig
+echo "If the following command fails, it means nondeterminism has been"
+echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
+diff stage3-release/bin/zig stage4-release/bin/zig
