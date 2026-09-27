@@ -23107,12 +23107,6 @@ fn resolveExportOptions(
         return sema.fail(block, name_src, "exported symbol name cannot be empty", .{});
     }
 
-    if (visibility != .default and linkage == .internal) {
-        return sema.fail(block, visibility_src, "symbol '{s}' exported with internal linkage has non-default visibility {s}", .{
-            name, @tagName(visibility),
-        });
-    }
-
     return .{
         .name = try ip.getOrPutString(gpa, io, pt.tid, name, .no_embedded_nulls),
         .linkage = linkage,
@@ -25290,13 +25284,6 @@ fn zirBuiltinExtern(
     }
 
     const options = try sema.resolveExternOptions(block, options_src, extra.rhs);
-    switch (options.linkage) {
-        .internal => if (options.visibility != .default) {
-            return sema.fail(block, options_src, "internal symbol cannot have non-default visibility", .{});
-        },
-        .strong, .weak => {},
-        .link_once => return sema.fail(block, options_src, "external symbol cannot have link once linkage", .{}),
-    }
     switch (options.relocation) {
         .any => {},
         .pcrel => if (options.visibility == .default) return sema.fail(block, options_src, "cannot require a pc-relative relocation to a symbol with default visibility", .{}),
@@ -29385,7 +29372,18 @@ pub fn coerceInMemoryAllowed(
         if (dest_ty.structFieldCount(zcu) != src_ty.structFieldCount(zcu)) break :tuple;
         const field_count = dest_ty.structFieldCount(zcu);
         for (0..field_count) |field_idx| {
-            if (dest_ty.structFieldIsComptime(field_idx, zcu) != src_ty.structFieldIsComptime(field_idx, zcu)) break :tuple;
+            const dest_is_comptime = dest_ty.structFieldIsComptime(field_idx, zcu);
+            const src_is_comptime = src_ty.structFieldIsComptime(field_idx, zcu);
+            if (dest_is_comptime != src_is_comptime) {
+                break :tuple;
+            }
+            if (dest_is_comptime) {
+                const dest_comptime_field_val = dest_ty.structFieldDefaultValue(field_idx, zcu).?;
+                const src_comptime_field_val = src_ty.structFieldDefaultValue(field_idx, zcu).?;
+                if (dest_comptime_field_val.ip_index != src_comptime_field_val.ip_index) {
+                    break :tuple;
+                }
+            }
             const dest_field_ty = dest_ty.fieldType(field_idx, zcu);
             const src_field_ty = src_ty.fieldType(field_idx, zcu);
             const field = try sema.coerceInMemoryAllowed(block, dest_field_ty, src_field_ty, dest_is_mut, target, dest_src, src_src, null);
@@ -34247,9 +34245,15 @@ const DerefResult = union(enum) {
 
 fn pointerDerefExtra(sema: *Sema, block: *Block, src: LazySrcLoc, ptr_val: Value) CompileError!DerefResult {
     const pt = sema.pt;
-    const ip = &pt.zcu.intern_pool;
+    const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
     switch (try sema.loadComptimePtr(block, src, ptr_val)) {
-        .success => |mv| return .{ .val = try mv.intern(pt, sema.arena) },
+        .success => |mv| {
+            const loaded_val = try mv.intern(pt, sema.arena);
+            const elem_ty_ip = ptr_val.typeOf(zcu).ptrInfo(zcu).child;
+            assert(loaded_val.typeOf(zcu).toIntern() == elem_ty_ip);
+            return .{ .val = loaded_val };
+        },
         .runtime_load => return .runtime_load,
         .undef => return sema.failWithUseOfUndef(block, src, null),
         .err_payload => |err_name| return sema.fail(block, src, "attempt to unwrap error: {f}", .{err_name.fmt(ip)}),
