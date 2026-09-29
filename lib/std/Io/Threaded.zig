@@ -19087,7 +19087,13 @@ fn createFileMap(
             null,
             &section_size,
             page,
-            .{ .COMMIT = populate },
+            .{
+                // Required when calling NtCreateSection with a file handle, otherwise
+                // this call will fail with INVALID_PARAMETER_6. The higher level
+                // `CreateFileMapping` function will set this bit for you when it
+                // calls NtCreateSection.
+                .COMMIT = true,
+            },
             file.handle,
         )) {
             .SUCCESS => {},
@@ -19122,6 +19128,36 @@ fn createFileMap(
             const page_size = std.heap.pageSize();
             const alignment: Alignment = .fromByteUnits(page_size);
             assert(contents_len == alignment.forward(len));
+        }
+        if (populate) {
+            const addresses = [_]windows.MEMORY_RANGE_ENTRY{
+                .{ .VirtualAddress = contents_ptr.?, .NumberOfBytes = len },
+            };
+            var info: windows.VIRTUAL_MEMORY.MEMORY_PREFETCH_INFORMATION = .{
+                .Flags = .{
+                    // This flag requires Windows 11 >= 24H4. On earlier versions, this being set
+                    // will cause NtSetInformationVirtualMemory to fail with INVALID_PARAMETER_5.
+                    .TO_WORKING_SET = false,
+                },
+            };
+            // There has been some doubt about the efficacy of this function:
+            // https://github.com/microsoft/Windows-Dev-Performance/issues/108
+            //
+            // However, through testing it has been shown that, if the mapped file is not
+            // in the cache, calling this function can turn what might otherwise be hard
+            // faults into soft faults. Either way, it's still good to call it in order to
+            // accurately reflect our intent.
+            switch (windows.ntdll.NtSetInformationVirtualMemory(
+                windows.current_process,
+                .Prefetch,
+                1,
+                &addresses,
+                &info,
+                @sizeOf(windows.VIRTUAL_MEMORY.MEMORY_PREFETCH_INFORMATION),
+            )) {
+                .SUCCESS => {},
+                else => |status| return windows.unexpectedStatus(status),
+            }
         }
         return .{
             .file = file,
