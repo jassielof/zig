@@ -636,6 +636,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(tests.addStandaloneTests(
         b,
         optimize_modes,
+        skip_non_native,
         enable_macos_sdk,
         enable_ios_sdk,
         enable_symlinks_windows,
@@ -883,7 +884,7 @@ fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {
 }
 
 const AddCompilerModOptions = struct {
-    optimize: std.lang.Optimize,
+    optimize: ?std.lang.Optimize,
     target: std.Build.ResolvedTarget,
     strip: ?bool = null,
     valgrind: ?bool = null,

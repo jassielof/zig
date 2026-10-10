@@ -44,7 +44,7 @@ gpa: Allocator,
 /// This arena will be cleared when the sema is destroyed.
 arena: Allocator,
 code: Zir,
-air_instructions: std.MultiArrayList(Air.Inst) = .{},
+air_instructions: std.MultiArrayList(Air.Inst) = .empty,
 air_extra: std.ArrayList(u32) = .empty,
 /// Maps ZIR to AIR.
 inst_map: InstMap = .{},
@@ -161,7 +161,7 @@ const MaybeComptimeAlloc = struct {
     stores: std.MultiArrayList(struct {
         inst: Air.Inst.Index,
         src: LazySrcLoc,
-    }) = .{},
+    }) = .empty,
 };
 
 const ComptimeAlloc = struct {
@@ -214,7 +214,7 @@ pub const InferredErrorSet = struct {
     /// All currently known errors that this error set contains. This includes
     /// direct additions via `return error.Foo;`, and possibly also errors that
     /// are returned from any dependent functions.
-    errors: NameMap = .{},
+    errors: NameMap = .empty,
     /// Other inferred error sets which this inferred error set should include.
     inferred_error_sets: std.array_hash_map.Auto(InternPool.Index, void) = .empty,
     /// The regular error set created by resolving this inferred error set.
@@ -363,7 +363,7 @@ pub const Block = struct {
     /// function type.
     /// This memory is allocated by a parent `Sema` in the temporary arena, and is
     /// used to add a `func_instance` into the `InternPool`.
-    params: std.MultiArrayList(Param) = .{},
+    params: std.MultiArrayList(Param) = .empty,
 
     label: ?*Label = null,
     inlining: ?*Inlining,
@@ -3038,7 +3038,7 @@ fn zirErrorSetDecl(
     const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
     const extra = sema.code.extraData(Zir.Inst.ErrorSetDecl, inst_data.payload_index);
 
-    var names: InferredErrorSet.NameMap = .{};
+    var names: InferredErrorSet.NameMap = .empty;
     try names.ensureUnusedCapacity(sema.arena, extra.data.fields_len);
 
     var extra_index: u32 = @intCast(extra.end);
@@ -4253,7 +4253,7 @@ fn zirCoercePtrElemTy(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileE
             const want_ty = try pt.arrayType(.{
                 .len = val_ty.arrayLen(zcu),
                 .child = elem_ty.toIntern(),
-                .sentinel = if (ptr_ty.sentinel(zcu)) |s| s.toIntern() else .none,
+                .sentinel = if (val_ty.sentinel(zcu)) |s| s.toIntern() else .none,
             });
             return sema.coerce(block, want_ty, uncoerced_val, src);
         },
@@ -8440,7 +8440,7 @@ fn resolveGenericBody(
 
     // Make sure any nested param instructions don't clobber our work.
     const prev_params = block.params;
-    block.params = .{};
+    block.params = .empty;
     defer {
         block.params = prev_params;
     }
@@ -9108,7 +9108,7 @@ fn zirParam(
     const param_ty: Type = if (extra.data.type.is_generic) .generic_poison else ty: {
         // Make sure any nested param instructions don't clobber our work.
         const prev_params = block.params;
-        block.params = .{};
+        block.params = .empty;
         defer {
             block.params = prev_params;
         }
@@ -11542,7 +11542,7 @@ fn validateSwitchBlock(
                         );
                     }
 
-                    var names: InferredErrorSet.NameMap = .{};
+                    var names: InferredErrorSet.NameMap = .empty;
                     try names.ensureUnusedCapacity(sema.arena, error_names.len);
                     for (error_names.get(ip)) |error_name| {
                         if (seen.errors.contains(error_name)) continue;
@@ -12177,7 +12177,7 @@ fn analyzeSwitchCaptures(
                     break :payload_ref try sema.errorCastUnchecked(case_block, capture_err_ty, loaded_operand);
                 },
                 .item_refs => |item_refs| {
-                    var names: InferredErrorSet.NameMap = .{};
+                    var names: InferredErrorSet.NameMap = .empty;
                     try names.ensureUnusedCapacity(sema.arena, item_refs.len);
                     for (item_refs) |item_ref| {
                         const item_val = sema.resolveValue(item_ref).?;
@@ -17952,19 +17952,40 @@ fn ensurePostHoc(sema: *Sema, block: *Block, dest_block: Zir.Inst.Index) !*Label
 /// break from an inline loop. In such case we must convert it to
 /// a runtime break.
 fn addRuntimeBreak(sema: *Sema, child_block: *Block, block_inst: Zir.Inst.Index, break_operand: Zir.Inst.Ref) !void {
-    const labeled_block = try sema.ensurePostHoc(child_block, block_inst);
-
     const operand = sema.resolveInst(break_operand);
-    const br_ref = try child_block.addBr(labeled_block.label.merges.block_inst, operand);
 
-    try labeled_block.label.merges.results.append(sema.gpa, operand);
-    try labeled_block.label.merges.br_list.append(sema.gpa, br_ref.toIndex().?);
-    try labeled_block.label.merges.src_locs.append(sema.gpa, null);
+    var target_block: ?*Block = child_block;
+    while (target_block) |candidate| : (target_block = candidate.parent) {
+        const label = candidate.label orelse continue;
+        if (label.zir_block != block_inst) continue;
+        switch (sema.code.instructions.items(.tag)[@backingInt(label.zir_block)]) {
+            .block_inline, .block_comptime => continue,
+            else => {},
+        }
+        return sema.addRuntimeBreakToBlock(child_block, candidate, label, operand);
+    }
 
-    labeled_block.block.runtime_index.increment();
-    if (labeled_block.block.runtime_cond == null and labeled_block.block.runtime_loop == null) {
-        labeled_block.block.runtime_cond = child_block.runtime_cond orelse child_block.runtime_loop;
-        labeled_block.block.runtime_loop = child_block.runtime_loop;
+    const labeled_block = try sema.ensurePostHoc(child_block, block_inst);
+    return sema.addRuntimeBreakToBlock(child_block, &labeled_block.block, &labeled_block.label, operand);
+}
+
+fn addRuntimeBreakToBlock(
+    sema: *Sema,
+    child_block: *Block,
+    target_block: *Block,
+    label: *Block.Label,
+    operand: Air.Inst.Ref,
+) !void {
+    const br_ref = try child_block.addBr(label.merges.block_inst, operand);
+
+    try label.merges.results.append(sema.gpa, operand);
+    try label.merges.br_list.append(sema.gpa, br_ref.toIndex().?);
+    try label.merges.src_locs.append(sema.gpa, null);
+
+    target_block.runtime_index.increment();
+    if (target_block.runtime_cond == null and target_block.runtime_loop == null) {
+        target_block.runtime_cond = child_block.runtime_cond orelse child_block.runtime_loop;
+        target_block.runtime_loop = child_block.runtime_loop;
     }
 }
 
@@ -34511,7 +34532,7 @@ fn errorSetMerge(sema: *Sema, lhs: Type, rhs: Type) !Type {
     const arena = sema.arena;
     const lhs_names = lhs.errorSetNames(pt.zcu);
     const rhs_names = rhs.errorSetNames(pt.zcu);
-    var names: InferredErrorSet.NameMap = .{};
+    var names: InferredErrorSet.NameMap = .empty;
     try names.ensureUnusedCapacity(arena, lhs_names.len);
 
     for (0..lhs_names.len) |lhs_index| {
