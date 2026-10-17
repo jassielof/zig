@@ -206,7 +206,7 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .powerpc64, .os_tag = .linux, .abi = .musl },
     .{ .cpu_arch = .powerpc64, .os_tag = .linux, .abi = .none },
     .{ .cpu_arch = .powerpc64, .os_tag = .openbsd, .abi = .none },
-    .{ .cpu_arch = .powerpc64, .os_tag = .ps3, .abi = .none },
+    .{ .cpu_arch = .powerpc64, .os_tag = .ps3, .abi = .ilp32 },
     .{ .cpu_arch = .powerpc64, .os_tag = .rtems, .abi = .none },
 
     .{ .cpu_arch = .powerpc64le, .os_tag = .freebsd, .abi = .none },
@@ -259,6 +259,13 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .sparc64, .os_tag = .netbsd, .abi = .none },
     .{ .cpu_arch = .sparc64, .os_tag = .openbsd, .abi = .none },
     .{ .cpu_arch = .sparc64, .os_tag = .rtems, .abi = .none },
+
+    // .{ .cpu_arch = .spirv32, .os_tag = .opencl, .abi = .none },
+    // .{ .cpu_arch = .spirv32, .os_tag = .opengl, .abi = .none },
+    // .{ .cpu_arch = .spirv32, .os_tag = .vulkan, .abi = .none },
+    // .{ .cpu_arch = .spirv64, .os_tag = .amdhsa, .abi = .none },
+    // .{ .cpu_arch = .spirv64, .os_tag = .opencl, .abi = .none },
+    // .{ .cpu_arch = .spirv64, .os_tag = .vulkan, .abi = .none },
 
     .{ .cpu_arch = .thumb, .os_tag = .freestanding, .abi = .eabi },
     .{ .cpu_arch = .thumb, .os_tag = .freestanding, .abi = .eabihf },
