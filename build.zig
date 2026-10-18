@@ -206,7 +206,7 @@ pub fn build(b: *std.Build) !void {
 
     const mem_leak_frames: u32 = b.option(u32, "mem-leak-frames", "How many stack frames to print when a memory leak occurs. Tests get 2x this amount.") orelse blk: {
         if (strip == true) break :blk @as(u32, 0);
-        if (optimize) |opt| if (opt != .debug) break :blk 0;
+        if (optimize != .debug) break :blk 0;
         break :blk 4;
     };
 
@@ -255,7 +255,7 @@ pub fn build(b: *std.Build) !void {
         exe.root_module.link_libc = true;
     }
 
-    const is_debug = if (optimize) |opt| opt == .debug else true;
+    const is_debug = optimize == .debug;
     const enable_debug_extensions = b.option(bool, "debug-extensions", "Enable commands and options useful for debugging the compiler") orelse is_debug;
     const enable_logging = b.option(bool, "log", "Enable debug logging with --debug-log") orelse is_debug;
 
@@ -884,7 +884,7 @@ fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {
 }
 
 const AddCompilerModOptions = struct {
-    optimize: ?std.lang.Optimize,
+    optimize: std.lang.Optimize,
     target: std.Build.ResolvedTarget,
     strip: ?bool = null,
     valgrind: ?bool = null,
@@ -1119,11 +1119,11 @@ fn addCxxKnownPath(
     const arena = b.graph.arena;
 
     const path_padded = run: {
-        var args = std.array_list.Managed([]const u8).init(arena);
-        try args.append(ctx.cxx_compiler);
+        var args: std.ArrayList([]const u8) = .empty;
+        try args.append(arena, ctx.cxx_compiler);
         var it = std.mem.tokenizeAny(u8, ctx.cxx_compiler_arg1, &std.ascii.whitespace);
-        while (it.next()) |arg| try args.append(arg);
-        try args.append(b.fmt("-print-file-name={s}", .{objname}));
+        while (it.next()) |arg| try args.append(arena, arg);
+        try args.append(arena, b.fmt("-print-file-name={s}", .{objname}));
         break :run b.run(args.items);
     };
     var tokenizer = mem.tokenizeAny(u8, path_padded, "\r\n");

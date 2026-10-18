@@ -1194,14 +1194,14 @@ pub const StandardOptimizeOptionOptions = struct {
     preferred_optimize_mode: ?std.builtin.Optimize = null,
 };
 
-pub fn standardOptimizeOption(b: *Build, options: StandardOptimizeOptionOptions) ?std.builtin.Optimize {
+pub fn standardOptimizeOption(b: *Build, options: StandardOptimizeOptionOptions) std.builtin.Optimize {
     const graph = b.graph;
 
     if (options.preferred_optimize_mode) |mode| {
         if (b.option(bool, "release", "optimize for end users") orelse (graph.release_mode != .off)) {
             return mode;
         } else {
-            return null;
+            return .debug;
         }
     }
 
@@ -1214,7 +1214,7 @@ pub fn standardOptimizeOption(b: *Build, options: StandardOptimizeOptionOptions)
     }
 
     return switch (graph.release_mode) {
-        .off => null,
+        .off => .debug,
         .any => {
             std.debug.print("the project does not declare a preferred optimization mode. choose: --release=fast, --release=safe, or --release=small\n", .{});
             process.exit(1);
@@ -2760,6 +2760,10 @@ fn validateConfigureDependency(lazy_path: LazyPath) void {
             .install_lib,
             .install_bin,
             .install_include,
+            .deployed_prefix,
+            .deployed_lib,
+            .deployed_bin,
+            .deployed_include,
             => @panic("configure phase cannot depend on files installed during make phase"),
             .libc_runtimes,
             => @panic("configure phase cannot depend on directory known only during make phase"),
