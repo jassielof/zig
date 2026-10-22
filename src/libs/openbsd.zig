@@ -90,7 +90,6 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 try includePath(comp, arena, "generic-openbsd"),
                 "-I",
                 try csuPath(comp, arena, switch (target.cpu.arch) {
-                    .mips64el => "mips64",
                     .x86 => "i386",
                     .x86_64 => "amd64",
                     else => |t| @tagName(t),
@@ -691,10 +690,6 @@ fn buildSharedLib(
         .emit_bin = .{ .yes_path = try bin_directory.join(arena, &.{basename}) },
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .soname = soname,
         .c_source_files = &c_source_files,

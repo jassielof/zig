@@ -546,7 +546,7 @@ pub const Os = struct {
                 .openbsd => .{
                     .semver = .{
                         .min = blk: {
-                            const default_min: std.SemanticVersion = .{ .major = 7, .minor = 8, .patch = 0 };
+                            const default_min: std.SemanticVersion = .{ .major = 7, .minor = 9, .patch = 0 };
 
                             for (std.zig.target.available_libcs) |libc| {
                                 if (libc.arch != arch or libc.os != tag or libc.abi != abi) continue;
@@ -558,7 +558,7 @@ pub const Os = struct {
 
                             break :blk default_min;
                         },
-                        .max = .{ .major = 7, .minor = 9, .patch = 0 },
+                        .max = .{ .major = 8, .minor = 0, .patch = 0 },
                     },
                 },
 
@@ -1043,6 +1043,10 @@ pub const ObjectFormat = enum {
     elf,
     /// The Intel HEX format for storing binary code in ASCII text.
     hex,
+    /// LLVM binary intermediate representation.
+    llvmbc,
+    /// LLVM text intermediate representation.
+    llvmir,
     /// The Mach object format used by macOS and other Apple platforms.
     macho,
     /// The a.out format used by Plan 9 from Bell Labs.
@@ -1060,6 +1064,8 @@ pub const ObjectFormat = enum {
             .coff => ".obj",
             .elf, .macho, .wasm => ".o",
             .hex => ".ihex",
+            .llvmbc => ".bc",
+            .llvmir => ".ll",
             .plan9 => arch.plan9Ext(),
             .raw => ".bin",
             .spirv => ".spv",
@@ -2901,7 +2907,6 @@ pub const DynamicLinker = struct {
                 .hppa,
                 .m88k,
                 .mips64,
-                .mips64el,
                 .powerpc,
                 .powerpc64,
                 .riscv64,
@@ -3212,7 +3217,7 @@ pub const CType = enum {
     longdouble,
 };
 
-/// Returns `null` if no C ABI is defined for this target.
+/// Returns `null` if no C ABI for `c_type` is defined for this target.
 pub fn cTypeByteSize(t: *const Target, c_type: CType) ?u16 {
     return switch (c_type) {
         .char,
@@ -3238,7 +3243,7 @@ pub fn cTypeByteSize(t: *const Target, c_type: CType) ?u16 {
     };
 }
 
-/// Returns `null` if no C ABI is defined for this target.
+/// Returns `null` if no C ABI for `c_type` is defined for this target.
 pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
     return switch (target.os.tag) {
         .freestanding,
@@ -3285,7 +3290,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
 
                     .x86,
                     .x86_64,
-                    => 80,
+                    => if (target.cpu.has(.x86, .x87)) 80 else null,
 
                     .alpha,
                     .riscv32,
@@ -3345,7 +3350,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
                 .x86_64,
                 => switch (target.abi) {
                     .android, .ohos => 64,
-                    else => 80,
+                    else => if (target.cpu.has(.x86, .x87)) 80 else null,
                 },
 
                 .powerpc,
@@ -3409,7 +3414,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
                 .long, .ulong => 32,
                 .longlong, .ulonglong, .double => 64,
                 .longdouble => switch (target.abi) {
-                    .gnu => 80,
+                    .gnu => if (target.cpu.has(.x86, .x87)) 80 else null,
                     else => 64,
                 },
             },
@@ -3420,7 +3425,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
                 .long, .ulong => 32,
                 .longlong, .ulonglong, .double => 64,
                 .longdouble => switch (target.abi) {
-                    .gnu => 80,
+                    .gnu => if (target.cpu.has(.x86, .x87)) 80 else null,
                     else => 64,
                 },
             },
@@ -3454,7 +3459,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
             },
             .longlong, .ulonglong, .double => 64,
             .longdouble => switch (target.cpu.arch) {
-                .x86_64 => 80,
+                .x86_64 => if (target.cpu.has(.x86, .x87)) 80 else null,
                 else => 64,
             },
         },
@@ -3492,14 +3497,14 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
             .short, .ushort => 16,
             .int, .uint, .float => 32,
             .long, .ulong, .longlong, .ulonglong, .double => 64,
-            .longdouble => 80,
+            .longdouble => if (target.cpu.has(.x86, .x87)) 80 else null,
         },
 
         .opengl => null,
     };
 }
 
-/// Returns `null` if no C ABI is defined for this target.
+/// Returns `null` if no C ABI for `c_type` is defined for this target.
 pub fn cTypeAlignment(target: *const Target, c_type: CType) ?u16 {
     // Overrides for unusual alignments
     switch (target.cpu.arch) {

@@ -1126,6 +1126,8 @@ fn analyzeBodyInner(
     crash_info.push(sema, block, body);
     defer crash_info.pop();
 
+    const path = zcu.namespacePtr(block.namespace).fileScope(zcu).path;
+
     // We use a while (true) loop here to avoid a redundant way of breaking out of
     // the loop. The only way to break out of the loop is with a `noreturn`
     // instruction.
@@ -1134,11 +1136,7 @@ fn analyzeBodyInner(
         crash_info.setBodyIndex(i);
         const inst = body[i];
 
-        // This log is a bit expensive, and LLVM fails to optimize it away.
-        if (build_options.enable_logging) {
-            const path = zcu.namespacePtr(block.namespace).fileScope(zcu).path;
-            std.log.scoped(.sema_zir).debug("sema ZIR {f} %{d}", .{ path.fmt(comp), inst });
-        }
+        std.log.scoped(.sema_zir).debug("sema ZIR {f} %{d}", .{ path.fmt(comp), inst });
 
         const air_ref: Air.Inst.Ref = inst: switch (tags[@backingInt(inst)]) {
             // zig fmt: off
@@ -1469,6 +1467,11 @@ fn analyzeBodyInner(
                     },
                     .astgen_error => return sema.failTransitive(.astgen_error),
                     .float_op_result_ty => try sema.zirFloatOpResultType(block, extended),
+                    .validate_c_type => {
+                        try sema.zirValidateCType(block, extended);
+                        i += 1;
+                        continue;
+                    },
                 };
             },
 
@@ -4313,6 +4316,14 @@ fn zirTryOperandTy(sema: *Sema, block: *Block, inst: Zir.Inst.Index, is_ref: boo
     } else {
         return Air.internedToRef(eu_ty.toIntern());
     }
+}
+
+fn zirValidateCType(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {
+    const c_type: std.Target.CType = @fromBackingInt(@intCast(extended.small));
+    if (sema.pt.zcu.getTarget().cTypeBitSize(c_type)) |_| return;
+    const src_node: std.zig.Ast.Node.Offset = @fromBackingInt(@bitCast(extended.operand));
+    const src = block.nodeOffset(src_node);
+    return sema.fail(block, src, "'c_{t}' is not valid on this target", .{c_type});
 }
 
 fn zirValidateRefTy(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void {
@@ -7515,13 +7526,12 @@ fn zirSplatOpResultType(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Compil
     const un_node = sema.code.instructions.items(.data)[@backingInt(inst)].un_node;
 
     const raw_ty = try sema.resolveTypeOrPoison(block, LazySrcLoc.unneeded, un_node.operand) orelse return .generic_poison_type;
-    const vec_ty = raw_ty.optEuBaseType(zcu);
+    const base_ty = raw_ty.optEuBaseType(zcu);
 
-    switch (vec_ty.zigTypeTag(zcu)) {
-        .array, .vector => {},
-        else => return sema.fail(block, block.nodeOffset(un_node.src_node), "expected array or vector type, found '{f}'", .{vec_ty.fmt(zcu)}),
+    switch (base_ty.zigTypeTag(zcu)) {
+        .array, .vector => return Air.internedToRef(base_ty.childType(zcu).toIntern()),
+        else => return Air.internedToRef(base_ty.toIntern()),
     }
-    return Air.internedToRef(vec_ty.childType(zcu).toIntern());
 }
 
 fn zirVectorType(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
@@ -23314,17 +23324,17 @@ fn zirSplat(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.I
     const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
     const extra = sema.code.extraData(Zir.Inst.Bin, inst_data.payload_index).data;
     const src = block.nodeOffset(inst_data.src_node);
-    const scalar_src = block.builtinCallArgSrc(inst_data.src_node, 0);
+    const operand_src = block.builtinCallArgSrc(inst_data.src_node, 0);
     const dest_ty = try sema.resolveDestType(block, src, extra.lhs, .remove_eu_opt, "@splat");
+    const operand = sema.resolveInst(extra.rhs);
 
     switch (dest_ty.zigTypeTag(zcu)) {
         .array, .vector => {},
-        else => return sema.fail(block, src, "expected array or vector type, found '{f}'", .{dest_ty.fmt(zcu)}),
+        else => return sema.coerce(block, dest_ty, operand, operand_src),
     }
 
-    const operand = sema.resolveInst(extra.rhs);
     const scalar_ty = dest_ty.childType(zcu);
-    const scalar = try sema.coerce(block, scalar_ty, operand, scalar_src);
+    const scalar = try sema.coerce(block, scalar_ty, operand, operand_src);
 
     const len = try sema.usizeCast(block, src, dest_ty.arrayLen(zcu));
 
@@ -23348,7 +23358,7 @@ fn zirSplat(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.I
         return .fromValue(try pt.aggregateSplatValue(dest_ty, scalar_val));
     }
 
-    try sema.requireRuntimeBlock(block, src, scalar_src);
+    try sema.requireRuntimeBlock(block, src, operand_src);
 
     switch (dest_ty.zigTypeTag(zcu)) {
         .vector, .array => return block.addTyOp(.splat, dest_ty, scalar),
@@ -27908,7 +27918,25 @@ fn elemValSlice(
         }
     }
 
-    if (try elem_ty.onePossibleValue(pt)) |opv| return .fromValue(opv);
+    switch (elem_ty.classify(zcu)) {
+        .no_possible_value => switch (elem_ty.zigTypeTag(zcu)) {
+            .@"opaque" => return sema.fail(block, src, "cannot load opaque type '{f}'", .{elem_ty.fmt(zcu)}),
+            else => {
+                // Loading an uninstantiable type always invokes Illegal Behavior.
+                if (block.isComptime()) {
+                    return sema.fail(block, src, "cannot load uninstantiable type '{f}'", .{elem_ty.fmt(zcu)});
+                } else if (block.wantSafety()) {
+                    try sema.safetyPanic(block, src, .load_uninstantiable_type);
+                    return .unreachable_value;
+                } else {
+                    _ = try block.addNoOp(.unreach);
+                    return .unreachable_value;
+                }
+            },
+        },
+        .one_possible_value => return .fromValue((try elem_ty.onePossibleValue(pt)).?),
+        .runtime, .partially_comptime, .fully_comptime => {},
+    }
 
     try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, slice_src);
     try sema.validateRuntimeValue(block, slice_src, slice);
