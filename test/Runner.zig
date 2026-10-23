@@ -204,7 +204,7 @@ pub const Target = struct {
         var query: std.Target.Query = .{};
         query.cpu_arch = switch (target.cpu) {
             .native => null,
-            else => |_, arch| @fromBackingInt(@backingInt(arch)),
+            else => |arch| @fromBackingInt(@backingInt(arch)),
         };
         switch (target.cpu) {
             .native => |native| query.cpu_model = switch (native.model) {
@@ -215,7 +215,7 @@ pub const Target = struct {
         }
         query.os_tag = switch (target.os) {
             .native => null,
-            else => |_, os| @fromBackingInt(@backingInt(os)),
+            else => |os| @fromBackingInt(@backingInt(os)),
         };
         switch (target.os) {
             .native => {},
@@ -223,7 +223,7 @@ pub const Target = struct {
         }
         query.abi = switch (target.abi) {
             .default => null,
-            else => |_, abi| @fromBackingInt(@backingInt(abi)),
+            else => |abi| @fromBackingInt(@backingInt(abi)),
         };
         switch (target.abi) {
             .default => {},
@@ -811,7 +811,7 @@ pub const DelimitedReader = struct {
         const d: *DelimitedReader = @fieldParentPtr("interface", r);
         const block = try d.unlimited.peekGreedy(d.delimiter.len);
         d.remaining = .limited(std.mem.findPos(u8, block, d.remaining.toInt().?, d.delimiter) orelse
-            block.len - d.delimiter.len + 1);
+            (block.len - d.delimiter.len + 1));
         if (d.remaining == .nothing) return error.EndOfStream;
         const n = try d.unlimited.stream(w, limit.min(d.remaining));
         d.remaining = d.remaining.subtract(n).?;
@@ -821,7 +821,7 @@ pub const DelimitedReader = struct {
         const d: *DelimitedReader = @fieldParentPtr("interface", r);
         const block = try d.unlimited.peekGreedy(d.delimiter.len);
         d.remaining = .limited(std.mem.findPos(u8, block, d.remaining.toInt().?, d.delimiter) orelse
-            block.len - d.delimiter.len + 1);
+            (block.len - d.delimiter.len + 1));
         if (d.remaining == .nothing) return error.EndOfStream;
         const n = try d.unlimited.discard(limit.min(d.remaining));
         d.remaining = d.remaining.subtract(n).?;
@@ -1397,9 +1397,9 @@ fn handleCommand(
             return update.fail("compiler failed to send terminating error_bundle", .{});
         },
     }
-    assert(contents_r.discardRemaining() catch |err| switch (err) {
+    assert((contents_r.discardRemaining() catch |err| switch (err) {
         error.ReadFailed => return error.ContentsReadFailed,
-    } == 0);
+    }) == 0);
     switch (cmd) {
         .todo, .skip => {},
         else => update.allow_skip = false,
