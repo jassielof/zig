@@ -14,7 +14,7 @@ test "cmpxchg" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try testCmpxchg();
     try comptime testCmpxchg();
@@ -41,7 +41,7 @@ test "atomicrmw and atomicload" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var data: u8 = 200;
@@ -70,7 +70,7 @@ test "cmpxchg with ptr" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var data1: i32 = 1234;
@@ -96,7 +96,7 @@ test "cmpxchg with ignored result" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var x: i32 = 1234;
 
@@ -133,6 +133,13 @@ fn test_u128_cmpxchg() !void {
 
     try expect(@cmpxchgStrong(u128, &x, 5678, 42, .seq_cst, .seq_cst) == null);
     try expect(x == 42);
+
+    var a: u128 align(16) = 40;
+    var b: u128 align(16) = 2;
+    _ = &a;
+    _ = &b;
+    try expect(@cmpxchgStrong(u128, &x, a | b, a & b, .seq_cst, .seq_cst) == null);
+    try expect(x == 0);
 }
 
 var a_global_variable = @as(u32, 1234);
@@ -141,7 +148,7 @@ test "cmpxchg on a global variable" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     _ = @cmpxchgStrong(u32, &a_global_variable, 1234, 42, .acquire, .monotonic);
     try expect(a_global_variable == 42);
@@ -151,7 +158,7 @@ test "atomic load and rmw with enum" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
     const Value = enum(u8) { a, b, c };
@@ -169,7 +176,7 @@ test "atomic store" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try comptime testAtomicStore();
     try testAtomicStore();
@@ -188,7 +195,7 @@ test "atomicrmw with floats" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
     try testAtomicRmwFloat();
@@ -214,7 +221,7 @@ test "atomicrmw with ints" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testAtomicRmwInts();
@@ -357,7 +364,7 @@ test "atomics with different types" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testAtomicsWithType(bool, true, false);
@@ -411,7 +418,7 @@ fn testAtomicsWithPackedStruct(comptime T: type, a: T, b: T) !void {
 test "return @atomicStore, using it as a void value" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         const A = struct {

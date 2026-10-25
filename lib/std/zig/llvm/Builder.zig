@@ -95,8 +95,8 @@ fn subArchName(target: *const std.Target, comptime family: std.Target.Cpu.Arch.F
 }
 
 pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const u8 {
-    var llvm_triple = std.array_list.Managed(u8).init(allocator);
-    defer llvm_triple.deinit();
+    var llvm_triple: std.ArrayList(u8) = .empty;
+    defer llvm_triple.deinit(allocator);
 
     const llvm_arch = switch (target.cpu.arch) {
         .arm => "arm",
@@ -168,7 +168,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         => unreachable, // Gated by hasLlvmSupport().
     };
 
-    try llvm_triple.appendSlice(llvm_arch);
+    try llvm_triple.appendSlice(allocator, llvm_arch);
 
     const llvm_sub_arch: ?[]const u8 = switch (target.cpu.arch) {
         .arm, .armeb, .thumb, .thumbeb => subArchName(target, .arm, .{
@@ -212,21 +212,35 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .powerpc => subArchName(target, .powerpc, .{
             .{ .spe, "spe" },
         }),
-        .spirv32, .spirv64 => subArchName(target, .spirv, .{
-            .{ .v1_6, "1.6" },
-            .{ .v1_5, "1.5" },
-            .{ .v1_4, "1.4" },
-            .{ .v1_3, "1.3" },
-            .{ .v1_2, "1.2" },
-            .{ .v1_1, "1.1" },
+        .spirv32 => switch (target.os.tag) {
+            .vulkan, .opengl => subArchName(target, .spirv, .{
+                .{ .v1_6, "1.6" },
+                .{ .v1_5, "1.5" },
+            }),
+            else => subArchName(target, .spirv, .{
+                .{ .v1_6, "v1.6" },
+                .{ .v1_5, "v1.5" },
+                .{ .v1_4, "v1.4" },
+                .{ .v1_3, "v1.3" },
+                .{ .v1_2, "v1.2" },
+                .{ .v1_1, "v1.1" },
+            }),
+        },
+        .spirv64 => subArchName(target, .spirv, .{
+            .{ .v1_6, "v1.6" },
+            .{ .v1_5, "v1.5" },
+            .{ .v1_4, "v1.4" },
+            .{ .v1_3, "v1.3" },
+            .{ .v1_2, "v1.2" },
+            .{ .v1_1, "v1.1" },
         }),
         else => null,
     };
 
-    if (llvm_sub_arch) |sub| try llvm_triple.appendSlice(sub);
-    try llvm_triple.append('-');
+    if (llvm_sub_arch) |sub| try llvm_triple.appendSlice(allocator, sub);
+    try llvm_triple.append(allocator, '-');
 
-    try llvm_triple.appendSlice(switch (target.os.tag) {
+    try llvm_triple.appendSlice(allocator, switch (target.os.tag) {
         .driverkit,
         .ios,
         .maccatalyst,
@@ -248,7 +262,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         => "mesa",
         else => "unknown",
     });
-    try llvm_triple.append('-');
+    try llvm_triple.append(allocator, '-');
 
     const llvm_os = switch (target.os.tag) {
         .dragonfly => "dragonfly",
@@ -298,28 +312,28 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .ashetos,
         => "unknown",
     };
-    try llvm_triple.appendSlice(llvm_os);
+    try llvm_triple.appendSlice(allocator, llvm_os);
 
     switch (target.os.versionRange()) {
         .none,
         .windows,
         => {},
         .semver => |ver| if (target.os.tag == .wasi and ver.min.major == 0) {
-            try llvm_triple.print("p{d}", .{ver.min.minor});
+            try llvm_triple.print(allocator, "p{d}", .{ver.min.minor});
         } else if (target.os.tag != .amdhsa) {
-            try llvm_triple.print("{d}.{d}.{d}", .{
+            try llvm_triple.print(allocator, "{d}.{d}.{d}", .{
                 ver.min.major,
                 ver.min.minor,
                 ver.min.patch,
             });
         },
-        inline .linux, .hurd => |ver| try llvm_triple.print("{d}.{d}.{d}", .{
+        inline .linux, .hurd => |ver| try llvm_triple.print(allocator, "{d}.{d}.{d}", .{
             ver.range.min.major,
             ver.range.min.minor,
             ver.range.min.patch,
         }),
     }
-    try llvm_triple.append('-');
+    try llvm_triple.append(allocator, '-');
 
     const llvm_abi = switch (target.abi) {
         .none => if (target.os.tag == .maccatalyst) "macabi" else "unknown",
@@ -357,7 +371,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .ohos, .ohoseabi => "ohos",
         .call0 => "unknown",
     };
-    try llvm_triple.appendSlice(llvm_abi);
+    try llvm_triple.appendSlice(allocator, llvm_abi);
 
     switch (target.os.versionRange()) {
         .none,
@@ -365,17 +379,17 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .windows,
         => {},
         inline .hurd, .linux => |ver| if (target.abi.isGnu()) {
-            try llvm_triple.print("{d}.{d}.{d}", .{
+            try llvm_triple.print(allocator, "{d}.{d}.{d}", .{
                 ver.glibc.major,
                 ver.glibc.minor,
                 ver.glibc.patch,
             });
         } else if (@TypeOf(ver) == std.Target.Os.LinuxVersionRange and target.abi.isAndroid()) {
-            try llvm_triple.print("{d}", .{ver.android});
+            try llvm_triple.print(allocator, "{d}", .{ver.android});
         },
     }
 
-    return llvm_triple.toOwnedSlice();
+    return llvm_triple.toOwnedSlice(allocator);
 }
 
 pub const DataLayout = struct {
@@ -10234,6 +10248,55 @@ pub fn opaqueType(self: *Builder, name: String) Allocator.Error!Type {
     return self.opaqueTypeAssumeCapacity(name);
 }
 
+pub fn targetType(
+    self: *Builder,
+    name: String,
+    types: []const Type,
+    ints: []const u32,
+) Allocator.Error!Type {
+    try self.ensureUnusedTypeCapacity(1, Type.Target, types.len + ints.len);
+    const Key = struct { name: String, types: []const Type, ints: []const u32 };
+    const Adapter = struct {
+        builder: *const Builder,
+        pub fn hash(_: @This(), key: Key) u32 {
+            var hasher: std.hash.Wyhash = .init(comptime std.hash.int(@backingInt(Type.Tag.target)));
+            hasher.update(std.mem.asBytes(&key.name));
+            hasher.update(std.mem.sliceAsBytes(key.types));
+            hasher.update(std.mem.sliceAsBytes(key.ints));
+            return @truncate(hasher.final());
+        }
+        pub fn eql(ctx: @This(), lhs_key: Key, _: void, rhs_index: usize) bool {
+            const rhs_data = ctx.builder.type_items.items[rhs_index];
+            if (rhs_data.tag != .target) return false;
+            var extra = ctx.builder.typeExtraDataTrail(Type.Target, rhs_data.data);
+            if (lhs_key.name != extra.data.name) return false;
+            const rhs_types = extra.trail.next(extra.data.types_len, Type, ctx.builder);
+            const rhs_ints = extra.trail.next(extra.data.ints_len, u32, ctx.builder);
+            return std.mem.eql(Type, lhs_key.types, rhs_types) and
+                std.mem.eql(u32, lhs_key.ints, rhs_ints);
+        }
+    };
+    const gop = self.type_map.getOrPutAssumeCapacityAdapted(
+        Key{ .name = name, .types = types, .ints = ints },
+        Adapter{ .builder = self },
+    );
+    if (!gop.found_existing) {
+        gop.key_ptr.* = {};
+        gop.value_ptr.* = {};
+        self.type_items.appendAssumeCapacity(.{
+            .tag = .target,
+            .data = self.addTypeExtraAssumeCapacity(Type.Target{
+                .name = name,
+                .types_len = @intCast(types.len),
+                .ints_len = @intCast(ints.len),
+            }),
+        });
+        self.type_extra.appendSliceAssumeCapacity(@ptrCast(types));
+        self.type_extra.appendSliceAssumeCapacity(ints);
+    }
+    return @fromBackingInt(@intCast(gop.index));
+}
+
 pub fn namedTypeSetBody(
     self: *Builder,
     named_type: Type,
@@ -10442,24 +10505,24 @@ pub fn getIntrinsic(
 
     var attributes: struct {
         builder: *Builder,
-        list: std.array_list.Managed(Attribute.Index),
+        list: std.ArrayList(Attribute.Index),
 
-        fn deinit(state: *@This()) void {
-            state.list.deinit();
+        fn deinit(state: *@This(), gpa: Allocator) void {
+            state.list.deinit(gpa);
             state.* = undefined;
         }
 
-        fn get(state: *@This(), attributes: []const Attribute) Allocator.Error!Attributes {
-            try state.list.resize(attributes.len);
+        fn get(state: *@This(), gpa: Allocator, attributes: []const Attribute) Allocator.Error!Attributes {
+            try state.list.resize(gpa, attributes.len);
             for (state.list.items, attributes) |*item, attribute|
                 item.* = try state.builder.attr(attribute);
             return state.builder.attrs(state.list.items);
         }
-    } = .{ .builder = self, .list = std.array_list.Managed(Attribute.Index).init(allocator) };
-    defer attributes.deinit();
+    } = .{ .builder = self, .list = .empty };
+    defer attributes.deinit(allocator);
 
     var overload_index: usize = 0;
-    function_attributes[FunctionAttributes.function_index] = try attributes.get(signature.attrs);
+    function_attributes[FunctionAttributes.function_index] = try attributes.get(allocator, signature.attrs);
     function_attributes[FunctionAttributes.return_index] = .none; // needed for void return
     for (0.., param_types, signature.params) |param_index, *param_type, signature_param| {
         switch (signature_param.kind) {
@@ -10475,7 +10538,7 @@ pub fn getIntrinsic(
                 FunctionAttributes.return_index
             else
                 FunctionAttributes.params_index + (param_index - signature.ret_len)
-        ] = try attributes.get(signature_param.attrs);
+        ] = try attributes.get(allocator, signature_param.attrs);
     }
     assert(overload_index == overload.len);
     for (param_types, signature.params) |*param_type, signature_param| {
