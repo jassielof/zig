@@ -1301,7 +1301,7 @@ pub const ErrorMsg = struct {
     pub fn init(gpa: Allocator, src_loc: LazySrcLoc, comptime format: []const u8, args: anytype) !ErrorMsg {
         return .{
             .src_loc = src_loc,
-            .msg = try std.fmt.allocPrint(gpa, format, args),
+            .msg = try gpa.print(format, args),
         };
     }
 
@@ -2782,7 +2782,7 @@ pub const LazySrcLoc = struct {
             /// The index of the item to point to within this case.
             item_idx: SwitchItem.Index,
 
-            pub const Index = packed struct(u32) {
+            pub const Index = bitpack struct(u32) {
                 kind: enum(u1) { single, range },
                 value: u31,
             };
@@ -4136,7 +4136,7 @@ pub fn errNote(
     comptime format: []const u8,
     args: anytype,
 ) error{OutOfMemory}!void {
-    const msg = try std.fmt.allocPrint(zcu.gpa, format, args);
+    const msg = try zcu.gpa.print(format, args);
     errdefer zcu.gpa.free(msg);
 
     parent.notes = try zcu.gpa.realloc(parent.notes, parent.notes.len + 1);
@@ -4157,7 +4157,7 @@ pub fn addGlobalAssembly(zcu: *Zcu, unit: AnalUnit, source: []const u8) !void {
     const gpa = zcu.gpa;
     const gop = try zcu.global_assembly.getOrPut(gpa, unit);
     if (gop.found_existing) {
-        const new_value = try std.fmt.allocPrint(gpa, "{s}\n{s}", .{ gop.value_ptr.*, source });
+        const new_value = try gpa.print("{s}\n{s}", .{ gop.value_ptr.*, source });
         gpa.free(gop.value_ptr.*);
         gop.value_ptr.* = new_value;
     } else {
@@ -4273,7 +4273,7 @@ pub fn atomicPtrAlignment(
     }
     if (switch (ty.zigTypeTag(zcu)) {
         .int, .@"enum" => true,
-        .@"struct" => ty.containerLayout(zcu) == .@"packed",
+        .@"struct" => ty.containerLayout(zcu) == .@"bitpack",
         else => false,
     }) {
         assert(ty.isAbiInt(zcu));
@@ -4301,14 +4301,14 @@ pub fn typeToStruct(zcu: *const Zcu, ty: Type) ?InternPool.LoadedStructType {
     };
 }
 
-pub fn typeToPackedStruct(zcu: *const Zcu, ty: Type) ?InternPool.LoadedStructType {
+pub fn typeToBitpackStruct(zcu: *const Zcu, ty: Type) ?InternPool.LoadedStructType {
     const s = zcu.typeToStruct(ty) orelse return null;
-    if (s.layout != .@"packed") return null;
+    if (s.layout != .@"bitpack") return null;
     return s;
 }
 
 /// https://github.com/ziglang/zig/issues/17178 explored storing these bit offsets
-/// into the packed struct InternPool data rather than computing this on the
+/// into the bitpack struct InternPool data rather than computing this on the
 /// fly, however it was found to perform worse when measured on real world
 /// projects.
 pub fn structPackedFieldBitOffset(
@@ -4317,7 +4317,7 @@ pub fn structPackedFieldBitOffset(
     field_index: u32,
 ) u16 {
     const ip = &zcu.intern_pool;
-    assert(struct_type.layout == .@"packed");
+    assert(struct_type.layout == .@"bitpack");
     var bit_sum: u64 = 0;
     for (0..struct_type.field_types.len) |i| {
         if (i == field_index) {
