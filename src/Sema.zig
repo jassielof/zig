@@ -9687,13 +9687,6 @@ fn zirElemPtrLoad(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError
     const extra = sema.code.extraData(Zir.Inst.Bin, inst_data.payload_index).data;
     const array_ptr = sema.resolveInst(extra.lhs);
     const uncoerced_elem_index = sema.resolveInst(extra.rhs);
-    if (try sema.resolveDefinedValue(block, src, array_ptr)) |array_ptr_val| {
-        if (try sema.maybeDerefPtr(block, src, array_ptr_val)) |array_val| {
-            const array: Air.Inst.Ref = .fromValue(array_val);
-            const array_src = src;
-            return elemVal(sema, block, src, array, array_src, uncoerced_elem_index, elem_index_src, true);
-        }
-    }
     const elem_index = try sema.coerce(block, .usize, uncoerced_elem_index, elem_index_src);
     const elem_ptr = try elemPtr(sema, block, src, array_ptr, elem_index, elem_index_src, false, true);
     return analyzeLoad(sema, block, src, elem_ptr, elem_index_src);
@@ -12884,6 +12877,12 @@ fn zirImport(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.
     const result = pt.doImport(block.getFileScope(zcu), operand) catch |err| switch (err) {
         error.ModuleNotFound => return sema.fail(block, operand_src, "no module named '{s}' available within module '{s}'", .{
             operand, block.getFileScope(zcu).mod.?.fully_qualified_name,
+        }),
+        error.NonZigModule => return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = try sema.errMsg(operand_src, "root file of module '{s}' is not a Zig or ZON file", .{operand});
+            errdefer msg.destroy(zcu.comp.gpa);
+            try sema.errNote(operand_src, msg, "use '@embedFile' to read the contents of the module's root file", .{});
+            break :msg msg;
         }),
         error.IllegalZigImport => unreachable, // caught before semantic analysis
         error.OutOfMemory => |e| return e,
@@ -26256,11 +26255,17 @@ fn fieldPtrLoad(
         return fieldVal(sema, block, src, object, field_name, field_name_src);
     }
 
-    if (try sema.resolveDefinedValue(block, src, object_ptr)) |object_ptr_val| {
-        if (try sema.maybeDerefPtr(block, src, object_ptr_val)) |object_val| {
-            const object: Air.Inst.Ref = .fromValue(object_val);
-            return fieldVal(sema, block, src, object, field_name, field_name_src);
-        }
+    // Make sure 'T.func' does not construct a pointer to 'func'.
+    //
+    // However, 'array.len'/'vector.len' should not require the entire array/vector to be loaded.
+    switch (pointee_ty.zigTypeTag(zcu)) {
+        .array, .vector => {},
+        else => if (try sema.resolveDefinedValue(block, src, object_ptr)) |object_ptr_val| {
+            if (try sema.maybeDerefPtr(block, src, object_ptr_val)) |object_val| {
+                const object: Air.Inst.Ref = .fromValue(object_val);
+                return fieldVal(sema, block, src, object, field_name, field_name_src);
+            }
+        },
     }
     const field_ptr = try sema.fieldPtr(block, src, object_ptr, field_name, field_name_src, false);
     return analyzeLoad(sema, block, src, field_ptr, field_name_src);
