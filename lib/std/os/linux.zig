@@ -19,10 +19,6 @@ const is_ppc = native_arch.isPowerpc();
 const is_riscv = native_arch.isRiscv();
 const is_sparc = native_arch.isSparc();
 const is_hppa = native_arch.isHppa();
-const iovec = std.posix.iovec;
-const iovec_const = std.posix.iovec_const;
-const winsize = std.posix.winsize;
-const ACCMODE = std.posix.ACCMODE;
 
 test {
     if (builtin.os.tag == .linux) {
@@ -3579,6 +3575,35 @@ pub fn tee(src: fd_t, dest: fd_t, len: usize, flags: u32) usize {
         flags,
     );
 }
+
+pub const iovec = extern struct {
+    base: [*]u8,
+    len: usize,
+};
+pub const iovec_const = extern struct {
+    base: [*]const u8,
+    len: usize,
+};
+
+pub const winsize = extern struct {
+    row: u16,
+    col: u16,
+    xpixel: u16,
+    ypixel: u16,
+};
+
+pub const ACCMODE = enum(u2) {
+    RDONLY = 0,
+    WRONLY = 1,
+    RDWR = 2,
+};
+
+pub const LOCK = struct {
+    pub const SH = 1;
+    pub const EX = 2;
+    pub const NB = 4;
+    pub const UN = 8;
+};
 
 pub const Sysinfo = if (native_abi.isX32())
     extern struct {
@@ -7460,7 +7485,7 @@ pub const cap_t = extern struct {
 
 pub const cap_user_header_t = extern struct {
     version: u32,
-    pid: usize,
+    pid: pid_t,
 };
 
 pub const cap_user_data_t = extern struct {
@@ -8442,7 +8467,7 @@ pub const STATX = bitpack struct(u32) {
 /// See [FS_IOC_SETFLAGS(2const)](https://man7.org/linux/man-pages/man2/FS_IOC_GETFLAGS.2const.html)
 /// for more.
 pub const STATX_ATTR = bitpack struct(u64) {
-    __pad1: u3 = 0,
+    __pad1: u2 = 0,
     /// [I] File is compressed by the fs.
     COMPRESSED: bool = false,
     __pad2: u1 = 0,
@@ -8452,12 +8477,14 @@ pub const STATX_ATTR = bitpack struct(u64) {
     APPEND: bool = false,
     /// [I] File is not to be dumped.
     NODUMP: bool = false,
+    __pad3: u4 = 0,
     /// [I] File requires a key to decrypt in the filesystem.
     ENCRYPTED: bool = false,
     /// File names a directory that triggers an automount.
     AUTOMOUNT: bool = false,
     /// File names the root of a mount.
     MOUNT_ROOT: bool = false,
+    __pad4: u6 = 0,
     /// [I] File is protected by the `dm-verity` device.
     VERITY: bool = false,
     /// File is currently in the CPU direct access state.
@@ -8465,7 +8492,7 @@ pub const STATX_ATTR = bitpack struct(u64) {
     DAX: bool = false,
     /// File supports atomic write operations.
     WRITE_ATOMIC: bool = false,
-    __pad3: u50 = 0,
+    __pad5: u41 = 0,
 };
 
 pub const statx_timestamp = extern struct {
@@ -9171,7 +9198,12 @@ pub const V = if (is_mips) enum(u32) {
     EOL2 = 16,
 };
 
-pub const TCSA = std.posix.TCSA;
+pub const TCSA = enum(c_uint) {
+    NOW,
+    DRAIN,
+    FLUSH,
+    _,
+};
 
 pub const sgttyb = if (is_mips or is_ppc or is_sparc) extern struct {
     ispeed: c_char,
