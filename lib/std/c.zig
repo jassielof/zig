@@ -1384,7 +1384,7 @@ pub const CTL = switch (native_os) {
 };
 pub const CPU = switch (native_os) {
     .openbsd => switch (native_arch) {
-        .aarch64, .aarch64_be => struct {
+        .aarch64, .aarch64be => struct {
             pub const COMPATIBLE = 1;
             pub const ID_AA64ISAR0 = 2;
             pub const ID_AA64ISAR1 = 3;
@@ -4474,7 +4474,7 @@ pub const cmsg_align = switch (native_os) {
     // https://github.com/NetBSD/src/blob/ba8e1774fd9c0c26ecca461c07bc95d9ebb69579/sys/sys/socket.h#L544
     .netbsd => switch (builtin.cpu.arch) {
         // https://github.com/NetBSD/src/blob/ac016822f750dc9166c84b6d2657479992622192/sys/arch/arm/include/cdefs.h#L63
-        .aarch64, .aarch64_be => @sizeOf(i128),
+        .aarch64, .aarch64be => @sizeOf(i128),
         .arm, .armeb => @sizeOf(c_longlong),
         // https://github.com/NetBSD/src/blob/ac016822f750dc9166c84b6d2657479992622192/sys/arch/i386/include/cdefs.h#L9
         .x86 => @sizeOf(c_int),
@@ -8284,7 +8284,7 @@ pub const padded_pthread_spin_t = switch (native_os) {
 
 pub const pthread_spin_t = switch (native_os) {
     .netbsd => switch (builtin.cpu.arch) {
-        .aarch64, .aarch64_be => u8,
+        .aarch64, .aarch64be => u8,
         .arm, .armeb => i32,
         .m68k => u8,
         .mips, .mipsel, .mipsf32, .mipsf32el, .mips64, .mips64el => u32,
@@ -11607,6 +11607,21 @@ pub extern "c" fn ffs(i: c_int) c_int;
 pub extern "c" fn ffsl(i: c_long) c_int;
 pub extern "c" fn ffsll(i: c_longlong) c_int;
 
+pub const srand48 = switch (builtin.os.tag) {
+    .openbsd => openbsd.srand48_deterministic,
+    else => private.srand48,
+};
+pub const seed48 = switch (builtin.os.tag) {
+    .openbsd => openbsd.seed48_deterministic,
+    else => private.seed48,
+};
+pub const lcong48 = switch (builtin.os.tag) {
+    .openbsd => openbsd.lcong48_deterministic,
+    else => private.lcong48,
+};
+pub extern "c" fn drand48() f64;
+pub extern "c" fn lrand48() c_long;
+pub extern "c" fn mrand48() c_long;
 pub extern "c" fn erand48(xsubi: *[3]c_ushort) f64;
 pub extern "c" fn jrand48(xsubi: *[3]c_ushort) c_long;
 pub extern "c" fn nrand48(xsubi: *[3]c_ushort) c_long;
@@ -12016,6 +12031,10 @@ pub const setkeymap = serenity.setkeymap;
 
 /// External definitions shared by two or more operating systems.
 const private = struct {
+    extern "c" fn srand48(seed: c_ulong) void;
+    extern "c" fn seed48(seed16v: *[3]c_ushort) *[3]c_ushort;
+    extern "c" fn lcong48(param: *[7]c_ushort) void;
+
     extern "c" fn strdup(s: [*:0]const c_char) ?[*:0]c_char;
     extern "c" fn _strdup(s: [*:0]const c_char) ?[*:0]c_char;
     extern "c" fn wcsdup(s: [*:0]const wchar_t) ?[*:0]wchar_t;
