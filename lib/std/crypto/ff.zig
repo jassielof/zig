@@ -357,18 +357,20 @@ pub fn Uint(comptime max_bits: comptime_int) type {
 
         // Replaces the limbs of `x` with the limbs of `y` if `on` is `true`.
         fn cmov(x: *Self, on: bool, y: Self) void {
+            const choice: timing_safe.Choice = .fromBool(on);
             for (x.limbs(), y.limbsConst()) |*x_limb, y_limb| {
-                x_limb.* = timing_safe.select(Limb, .fromBool(on), y_limb, x_limb.*);
+                x_limb.* = timing_safe.select(Limb, choice, y_limb, x_limb.*);
             }
         }
 
         // Zeroed unused limbs allow `y` to be narrower than `x`.
         fn conditionalAddWithOverflow(x: *Self, on: bool, y: Self) u1 {
+            const choice: timing_safe.Choice = .fromBool(on);
             var carry: u1 = 0;
             assert(y.limbs_len <= x.limbs_len);
             for (x.limbs(), 0..) |*x_limb, i| {
                 const res = x_limb.* + y.limbs_buffer[i] + carry;
-                x_limb.* = timing_safe.select(Limb, .fromBool(on), @as(TLimb, @truncate(res)), x_limb.*);
+                x_limb.* = timing_safe.select(Limb, choice, @as(TLimb, @truncate(res)), x_limb.*);
                 carry = @truncate(res >> t_bits);
             }
             return carry;
@@ -376,14 +378,29 @@ pub fn Uint(comptime max_bits: comptime_int) type {
 
         // Zeroed unused limbs allow `y` to be narrower than `x`.
         fn conditionalSubWithOverflow(x: *Self, on: bool, y: Self) u1 {
+            const choice: timing_safe.Choice = .fromBool(on);
             var borrow: u1 = 0;
             assert(y.limbs_len <= x.limbs_len);
             for (x.limbs(), 0..) |*x_limb, i| {
                 const res = x_limb.* -% y.limbs_buffer[i] -% borrow;
-                x_limb.* = timing_safe.select(Limb, .fromBool(on), @as(TLimb, @truncate(res)), x_limb.*);
+                x_limb.* = timing_safe.select(Limb, choice, @as(TLimb, @truncate(res)), x_limb.*);
                 borrow = @truncate(res >> t_bits);
             }
             return borrow;
+        }
+
+        // Subtracts `bound` if needed; `x` with the extra high bit `top` must be below 2 * bound.
+        // Returns whether it subtracted.
+        fn reduceOnce(x: *Self, top: u1, bound: Self) bool {
+            if (std.options.side_channels_mitigations == .none) {
+                const need_sub = timing_safe.eql(u1, top, @intFromBool(ct.limbsCmpLt(x.*, bound)));
+                _ = x.conditionalSubWithOverflow(need_sub, bound);
+                return need_sub;
+            }
+            var reduced = x.*;
+            const need_sub = timing_safe.eql(u1, top, reduced.subWithOverflow(bound));
+            x.cmov(need_sub, reduced);
+            return need_sub;
         }
 
         fn shiftLeft(x: *Self, shift: usize) void {
@@ -879,10 +896,7 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
         // Adds y to x. Returns whether reduction was needed.
         fn addAndReduce(x: *FeUint, y: FeUint, bound: FeUint) bool {
             const overflow = x.addWithOverflow(y);
-            const underflow: u1 = @bitCast(ct.limbsCmpLt(x.*, bound));
-            const need_sub = timing_safe.eql(u1, overflow, underflow);
-            _ = x.conditionalSubWithOverflow(need_sub, bound);
-            return need_sub;
+            return x.reduceOnce(overflow, bound);
         }
 
         /// Adds two field elements (mod m).
@@ -939,6 +953,27 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
                 _ = ca.shiftRightByOneWithCarry(0);
                 _ = cb.shiftRightByOneWithCarry(0);
             }
+        }
+
+        // If `on` is set, replaces x with (x + y) / 2, or just x / 2 if `add_y` isn't set.
+        fn conditionalAddAndHalve(x: *FeUint, y: FeUint, add_y: timing_safe.Choice, on: timing_safe.Choice) void {
+            const limbs = x.limbs();
+            var sum = limbs[0] + timing_safe.select(Limb, add_y, y.limbs_buffer[0], 0);
+            for (1..limbs.len) |i| {
+                const next = limbs[i] + timing_safe.select(Limb, add_y, y.limbs_buffer[i], 0) + (sum >> t_bits);
+                const half = (@as(TLimb, @truncate(sum)) >> 1) | ((next & 1) << (t_bits - 1));
+                limbs[i - 1] = timing_safe.select(Limb, on, half, limbs[i - 1]);
+                sum = next;
+            }
+            limbs[limbs.len - 1] = timing_safe.select(Limb, on, sum >> 1, limbs[limbs.len - 1]);
+        }
+
+        fn conditionalHalveWithCoeffs(val: *FeUint, ca: *FeUint, cb: *FeUint, m: FeUint, a: FeUint, on: bool) void {
+            const halve: timing_safe.Choice = .fromBool(on);
+            const any_odd: timing_safe.Choice = .fromBool(ca.isOdd() | cb.isOdd());
+            conditionalAddAndHalve(val, m, comptime .fromBool(false), halve);
+            conditionalAddAndHalve(ca, m, any_odd, halve);
+            conditionalAddAndHalve(cb, a, any_odd, halve);
         }
 
         /// Returns the inverse of x, or null if it doesn't have one.
@@ -1000,6 +1035,96 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
             return out;
         }
 
+        /// Returns the inverse of x, or null if it doesn't have one.
+        ///
+        /// With this function, x can be secret. For public values, invertPublic() is available and is faster.
+        pub fn invert(self: Self, x: Fe) ?Fe {
+            var plain = x;
+            if (plain.montgomery) {
+                self.fromMontgomery(&plain) catch unreachable;
+            }
+
+            const both_even = !plain.v.isOdd() & !self.v.isOdd();
+            const invalid = plain.v.isZero() | both_even;
+            var a = plain.v;
+            a.cmov(invalid, self.one().v); // With invalid input (zero, or when x and the modulus are both even), just invert 1 so we don't leak what's wrong
+
+            const m = self.v;
+            assert(a.limbs_len == m.limbs_len);
+
+            var u = a;
+            var v = m;
+
+            var coeff_a = self.one().v;
+            var coeff_b = self.zero.v;
+            var coeff_c = self.zero.v;
+            var coeff_d = self.one().v;
+
+            comptime assert(FeUint.capacity_bits <= math.maxInt(usize) / 2);
+            const n = self.limbs_count();
+
+            // Same algorithm as invertPublic(), but always run the same number of iterations and don't branch on secrets.
+
+            for (0..2 * self.bits()) |_| {
+                const both_odd = u.isOdd() & v.isOdd();
+                const v_lt_u = ct.limbsCmpLt(v, u);
+                const update_u = both_odd & v_lt_u;
+                const update_v = both_odd & !v_lt_u;
+
+                _ = u.conditionalSubWithOverflow(update_u, v);
+                _ = v.conditionalSubWithOverflow(update_v, u);
+
+                var sum_ac: [FeUint.max_limbs_count]Limb = undefined;
+                var sum_bd: [FeUint.max_limbs_count]Limb = undefined;
+                var sub_ac: [FeUint.max_limbs_count]Limb = undefined;
+                var sub_bd: [FeUint.max_limbs_count]Limb = undefined;
+                var carry_ac: Limb = 0;
+                var carry_bd: Limb = 0;
+                var borrow_ac: Limb = 0;
+                var borrow_bd: Limb = 0;
+                for (0..n) |i| {
+                    const ac = coeff_a.limbs_buffer[i] + coeff_c.limbs_buffer[i] + carry_ac;
+                    const bd = coeff_b.limbs_buffer[i] + coeff_d.limbs_buffer[i] + carry_bd;
+                    sum_ac[i] = @as(TLimb, @truncate(ac));
+                    sum_bd[i] = @as(TLimb, @truncate(bd));
+                    carry_ac = ac >> t_bits;
+                    carry_bd = bd >> t_bits;
+                    const ac_sub = sum_ac[i] -% m.limbs_buffer[i] -% borrow_ac;
+                    const bd_sub = sum_bd[i] -% a.limbs_buffer[i] -% borrow_bd;
+                    sub_ac[i] = @as(TLimb, @truncate(ac_sub));
+                    sub_bd[i] = @as(TLimb, @truncate(bd_sub));
+                    borrow_ac = ac_sub >> t_bits;
+                    borrow_bd = bd_sub >> t_bits;
+                }
+                const need_sub: timing_safe.Choice = .fromBool(timing_safe.eql(Limb, carry_ac, borrow_ac));
+                const choice_u: timing_safe.Choice = .fromBool(update_u);
+                const choice_v: timing_safe.Choice = .fromBool(update_v);
+                for (0..n) |i| {
+                    const ac = timing_safe.select(Limb, need_sub, sub_ac[i], sum_ac[i]);
+                    const bd = timing_safe.select(Limb, need_sub, sub_bd[i], sum_bd[i]);
+                    coeff_a.limbs_buffer[i] = timing_safe.select(Limb, choice_u, ac, coeff_a.limbs_buffer[i]);
+                    coeff_b.limbs_buffer[i] = timing_safe.select(Limb, choice_u, bd, coeff_b.limbs_buffer[i]);
+                    coeff_c.limbs_buffer[i] = timing_safe.select(Limb, choice_v, ac, coeff_c.limbs_buffer[i]);
+                    coeff_d.limbs_buffer[i] = timing_safe.select(Limb, choice_v, bd, coeff_d.limbs_buffer[i]);
+                }
+
+                const halve_u = !u.isOdd();
+                const halve_v = !v.isOdd();
+                conditionalHalveWithCoeffs(&u, &coeff_a, &coeff_b, m, a, halve_u);
+                conditionalHalveWithCoeffs(&v, &coeff_c, &coeff_d, m, a, halve_v);
+            }
+
+            const invertible = !invalid & v.isZero() & u.isOne();
+
+            var out = Fe{ .v = coeff_a };
+            if (x.montgomery) {
+                self.toMontgomery(&out) catch unreachable;
+            }
+            if (!invertible) return null;
+
+            return out;
+        }
+
         /// Converts a field element to the Montgomery form.
         /// Rejects even moduli, which have no Montgomery form.
         pub fn toMontgomery(self: Self, x: *Fe) RepresentationError!void {
@@ -1024,6 +1149,22 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
 
         /// Reduces an arbitrary `Uint`, converting it to a field element.
         pub fn reduce(self: Self, x: anytype) Fe {
+            if (self.v.isOdd()) {
+                const n = self.limbs_count();
+                var acc = self.zero;
+                var k = (x.limbs_len - 1) / n;
+                while (true) : (k -= 1) {
+                    const chunk = x.limbsConst()[k * n .. @min((k + 1) * n, x.limbs_len)];
+                    var c = self.zero;
+                    @memcpy(c.v.limbs()[0..chunk.len], chunk);
+                    _ = addAndReduce(&acc.v, self.montgomeryMul(c, self.rr).v, self.v);
+                    if (k == 0) break;
+                    acc = self.montgomeryMul(acc, self.rr);
+                }
+                acc.montgomery = true;
+                self.fromMontgomery(&acc) catch unreachable;
+                return acc;
+            }
             var out = self.zero;
             var i = x.limbs_len - 1;
             if (self.limbs_count() >= 2) {
@@ -1103,9 +1244,7 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
             assert(x.limbs_count() == self.limbs_count());
             assert(y.limbs_count() == self.limbs_count());
             const overflow = self.montgomeryLoop(&d, &x, &y);
-            const underflow = 1 -% @intFromBool(ct.limbsCmpGeq(d.v, self.v));
-            const need_sub = timing_safe.eql(u1, overflow, underflow);
-            _ = d.v.conditionalSubWithOverflow(need_sub, self.v);
+            _ = d.v.reduceOnce(overflow, self.v);
             d.montgomery = x.montgomery == y.montgomery;
             return d;
         }
@@ -1114,9 +1253,7 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
             var d = self.zero;
             assert(x.limbs_count() == self.limbs_count());
             const overflow = self.montgomeryLoop(&d, &x, &x);
-            const underflow = 1 -% @intFromBool(ct.limbsCmpGeq(d.v, self.v));
-            const need_sub = timing_safe.eql(u1, overflow, underflow);
-            _ = d.v.conditionalSubWithOverflow(need_sub, self.v);
+            _ = d.v.reduceOnce(overflow, self.v);
             d.montgomery = true;
             return d;
         }
@@ -1778,17 +1915,44 @@ test "modular inversion" {
         const m = try Modulus(256).fromPrimitiveWithOptions(u256, v[2], .{ .allow_even = true });
         const x = try Modulus(256).Fe.fromPrimitive(u256, m, v[1]);
         try testing.expectEqual(v[0], try m.invertPublic(x).?.toPrimitive(u256));
+        try testing.expectEqual(v[0], try m.invert(x).?.toPrimitive(u256));
     }
 
     for ([_]u16{ 2, 15, 16, 17 }) |m_val| {
         const m = try Modulus(16).fromPrimitiveWithOptions(u16, m_val, .{ .allow_even = true });
         for (0..m_val) |a_val| {
-            const inv = m.invertPublic(try Modulus(16).Fe.fromPrimitive(u16, m, @intCast(a_val)));
+            const a = try Modulus(16).Fe.fromPrimitive(u16, m, @intCast(a_val));
+            const inv = m.invertPublic(a);
+            try testing.expectEqual(inv, m.invert(a));
             if (math.gcd(a_val, m_val) == 1) {
                 const inv_val = try inv.?.toPrimitive(u16);
                 try testing.expectEqual(1, (inv_val * a_val) % m_val);
             } else {
                 try testing.expect(inv == null);
+            }
+        }
+    }
+
+    const moduli = [_]u256{
+        (1 << 255) - 19,
+        ((1 << 127) - 1) * 97,
+        (1 << 256) - 2,
+        (1 << (2 * t_bits)) - 1,
+    };
+    for (moduli) |m_val| {
+        const m = try Modulus(256).fromPrimitiveWithOptions(u256, m_val, .{ .allow_even = true });
+        for ([_]u256{ 2, 97, (1 << t_bits) + 1, 0x24ebd835a70be4e2 }) |a_val| {
+            const a = try Modulus(256).Fe.fromPrimitive(u256, m, a_val);
+            var a_mont = a;
+            if (m_val % 2 == 1) try m.toMontgomery(&a_mont);
+            for ([_]Modulus(256).Fe{ a, a_mont }) |x| {
+                const inv = m.invert(x);
+                try testing.expectEqual(m.invertPublic(x), inv);
+                if (inv) |y| {
+                    try testing.expect(m.isOne(m.mul(x, y)));
+                } else {
+                    try testing.expect(math.gcd(a_val, m_val) != 1);
+                }
             }
         }
     }
