@@ -239,6 +239,13 @@ pub const Element = struct {
     /// - Ensures length is within `bytes`
     /// - Ensures length is less than `std.math.maxInt(Index)`
     pub fn decode(bytes: []const u8, index: Index) DecodeError!Element {
+        const element = try decodeHeader(bytes, index);
+        if (element.slice.end > bytes.len) return error.EndOfStream;
+        return element;
+    }
+
+    /// Like decode(), but the contents don't have to be in `bytes`.
+    pub fn decodeHeader(bytes: []const u8, index: Index) DecodeError!Element {
         if (index > bytes.len) return error.EndOfStream;
         var reader: std.Io.Reader = .fixed(bytes[index..]);
 
@@ -263,14 +270,13 @@ pub const Element = struct {
                 error.ReadFailed => unreachable, // it's all fixed buffers
                 else => |e| return e,
             };
-            if (len < 128) return error.EndOfStream; // should have used short form
+            if (len < 128 or std.math.shr(Index, len, 8 * (len_size - 1)) == 0) return error.InvalidEncoding; // not the shortest form
 
             break :blk len;
         };
 
-        const start = index + @as(Index, @intCast(reader.seek));
+        const start = std.math.add(Index, index, @intCast(reader.seek)) catch return error.EndOfStream;
         const end = std.math.add(Index, start, len) catch return error.EndOfStream;
-        if (end > bytes.len) return error.EndOfStream;
 
         return Element{ .tag = tag, .slice = Slice{ .start = start, .end = end } };
     }
@@ -289,11 +295,18 @@ test Element {
         .slice = Element.Slice{ .start = 3, .end = long_form.len },
     }, Element.decode(&long_form, 0));
 
+    for ([_][]const u8{ &.{ 0x30, 0x81, 0x7f }, &.{ 0x30, 0x82, 0x00, 0x81 } }) |non_minimal_length| {
+        try std.testing.expectError(error.InvalidEncoding, Element.decode(non_minimal_length, 0));
+    }
+
     const multi_byte_tag = [_]u8{ 0x1F, 0x20, 0x08, 0x30, 0x36, 0x3A, 0x32, 0x37, 0x3A, 0x31, 0x35 };
     try std.testing.expectEqual(Element{
         .tag = Tag.universal(.time_of_day, false),
         .slice = Element.Slice{ .start = 3, .end = multi_byte_tag.len },
     }, Element.decode(&multi_byte_tag, 0));
+
+    try std.testing.expectError(error.EndOfStream, Element.decode(long_form[0..10], 0));
+    try std.testing.expectEqual(long_form.len, (try Element.decodeHeader(long_form[0..10], 0)).slice.end);
 }
 
 /// For decoding.
@@ -416,6 +429,7 @@ pub const Any = struct {
 
     pub fn decodeDer(decoder: *der.Decoder) !@This() {
         const ele = try decoder.element(ExpectedTag{});
+        decoder.index = ele.slice.end;
         return .{ .tag = ele.tag, .bytes = decoder.view(ele) };
     }
 
